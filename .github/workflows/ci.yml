@@ -1,0 +1,38 @@
+# One job, on every push and PR: the server builds and tests on Linux, the platform it runs on.
+# scripts/ci.sh is the same gate locally and in a cloud session (scripts/cloud-toolchain.sh run scripts/ci.sh).
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    container: swift:6.4-noble
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # The contract's home, for the drift check (DECISIONS D-1). Public read; skipped if it can't be fetched.
+      - uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          repository: mackoj/tegola
+          path: tegola
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Toolchain
+        run: swift --version
+      - name: Gate
+        env:
+          TEGOLA_DIR: tegola
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE" && scripts/ci.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-logs
+          path: build/*.log
