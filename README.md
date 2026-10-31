@@ -78,9 +78,16 @@ Everything comes from the environment. A missing or unsafe value stops the serve
 
 ## Deploy
 
-`Dockerfile` builds a static release binary into a slim Ubuntu image that runs as an unprivileged user. Put a TLS
-reverse proxy in front (HTTPS only, TLS 1.2+, HSTS), set `TEGOLA_TRUSTED_PROXY_HOPS=1`, and run one instance: the key
-store and rate limits are in memory in milestone 1 (D-8, D-9).
+A Docker Compose stack: Caddy (TLS, Let's Encrypt) in front of the server, which publishes no port and runs
+read-only, unprivileged and without capabilities. `docs/DEPLOY.md` is the runbook and the go-live checklist.
+
+```sh
+cp deploy/env.example .env      # fill in; TEGOLA_DOMAIN=localhost for a local rehearsal
+docker compose up -d --build
+scripts/docker-smoke.sh          # builds the image and checks it, then the stack over HTTPS
+```
+
+Run one instance: the key store and rate limits are in memory in milestone 1 (D-8, D-9).
 
 ## Layout
 
@@ -94,7 +101,9 @@ Tests/AppAttestTests             verification, CBOR, the pinned root
 Tests/TegolaServerTests          security, contract and configuration tests over HTTP
 docs/                            PLAN (spec), DECISIONS, milestone reports
 tasks/                           plan, todo, HANDOFF
-scripts/                         test, ci, sync-contract, lint-api, secret-scan, cloud-toolchain
+deploy/                          Caddyfile, env.example
+docker-compose.yml               Caddy + server
+scripts/                         test, ci, docker-smoke, sync-contract, lint-api, secret-scan, cloud-toolchain
 ```
 
 ### Dependencies

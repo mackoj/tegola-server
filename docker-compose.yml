@@ -1,0 +1,59 @@
+# One instance of tegola-server behind Caddy (TLS), for production or a local rehearsal (docs/DEPLOY.md).
+#   cp deploy/env.example .env   # then fill it in
+#   docker compose up -d --build
+# Milestone 1 keeps keys and rate limits in memory, so run exactly one tegola-server (D-8, D-9).
+name: tegola
+
+services:
+  tegola-server:
+    build: .
+    image: tegola-server:local
+    env_file: ${TEGOLA_ENV_FILE:-.env}
+    environment:
+      # Fixed by the topology, whatever the env file says.
+      TEGOLA_HOST: 0.0.0.0
+      TEGOLA_PORT: "8080"
+      TEGOLA_TRUSTED_PROXY_HOPS: "1"
+    # Reachable only by Caddy, on the private network: no published port.
+    expose: ["8080"]
+    networks: [internal]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    user: "10001:10001"
+    pids_limit: 256
+    mem_limit: 512m
+    restart: unless-stopped
+    stop_grace_period: 15s
+
+  caddy:
+    image: caddy:2.10-alpine
+    # Only the domain: the server's secrets (debug token, source keys) never reach the proxy.
+    environment:
+      TEGOLA_DOMAIN: ${TEGOLA_DOMAIN:?set TEGOLA_DOMAIN in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [internal, public]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    depends_on: [tegola-server]
+    restart: unless-stopped
+
+networks:
+  # Caddy ↔ server. Not internal-only: the server will call the lookup databases in M3.
+  internal: {}
+  public: {}
+
+volumes:
+  # Certificates and ACME account: keep this volume, or Caddy asks for new certificates at every start.
+  caddy_data: {}
+  caddy_config: {}

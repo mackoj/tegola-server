@@ -11,3 +11,4 @@ xcuserdata/
 # Local environment files (TEGOLA_DEBUG_TOKEN and source keys never go in the repo)
 .env
 .env.*
+!deploy/env.example
