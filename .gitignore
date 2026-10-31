@@ -1,0 +1,13 @@
+.DS_Store
+.build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.swiftpm/
+/build/
+*.actual
+*.claude
+
+# Local environment files (TEGOLA_DEBUG_TOKEN and source keys never go in the repo)
+.env
+.env.*

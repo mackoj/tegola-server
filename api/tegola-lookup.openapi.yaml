@@ -1,0 +1,769 @@
+openapi: 3.1.0
+info:
+  title: Tegola Lookup API
+  version: 0.1.0
+  summary: Identify a physical object from a barcode or a few words, and match a list of titles in one go.
+  description: |
+    The contract between the Tegola iPhone app and `mackoj/tegola-server`. The server implements it; the app
+    generates its client from this file with swift-openapi-generator. Changing this file is how either side asks for
+    a change.
+
+    **What the app sends, and what it never sends.** A barcode, a catalogue number, a title, OCR text read from a
+    label, and the type and subtype the collector chose. Never a photo, never anything about the rest of the shelf,
+    never a name, price, place or device identifier (PLAN §2.7, PD-095, PD-118). Requests carry no account: there is
+    none (ADR-0001).
+
+    **What the server never decides.** A response proposes; the collector confirms. Every candidate says why it was
+    proposed (`reasons`) and how sure the server is (`confidence`). The app shows both and writes nothing until the
+    collector agrees (PD-042, PD-045, PD-150).
+
+    **Field values use the type file's keys.** `Candidate.fields` is keyed by the `key` of a field in the type's
+    YAML file (`original-spec/*.yml`, clctn `Types/*.yml`), and each value has the JSON shape of that field's kind
+    (see `FieldValue`). A key the type doesn't declare is ignored by the app.
+
+    **No match is not an error.** An identifier the sources don't know returns `200` with no candidates.
+
+    **Security.** There are no accounts, so the server can't know *who* calls; it proves *what* calls: the genuine
+    Tegola app on a genuine Apple device, through App Attest.
+
+    1. Once per install, the app gets a challenge (`GET /app-attest/challenge`), generates an App Attest key, and
+       registers it with its attestation (`POST /app-attest/keys`). The server verifies the attestation against
+       Apple's App Attest root CA, the app id (`<TeamID>.fr.macko.tegola`) and the challenge, then stores the key's
+       public key and counter. Nothing about the person is stored.
+    2. Every other call carries `X-Tegola-Key-ID` and `X-Tegola-Assertion`: an assertion over
+       `SHA-256(method + "\n" + path-with-query + "\n" + X-Tegola-Timestamp + "\n" + SHA-256(body))`. The server
+       checks the signature, that the counter increased, and that the timestamp is within 5 minutes, which stops
+       replays. In those bytes, `method` is upper case, `path-with-query` is the request target exactly as sent
+       (base path included: `/v1/types/music/barcodes/0602547817327?symbology=ean13`), the timestamp is the header's
+       text, and `SHA-256(body)` is written as 64 lower-case hex digits (an absent body hashes as empty).
+    3. Simulators and CI can't attest. Debug builds send `X-Tegola-Debug-Token` instead; **the production server
+       rejects it outright**, and only a development server accepts it.
+
+    Transport: HTTPS only (TLS 1.2 or later, TLS 1.3 preferred), no plain HTTP, HSTS on the host. The app uses an
+    ephemeral `URLSession` (no cookies, no cache on disk). Rate limits apply per attested key and per IP and answer
+    `429` with `Retry-After`. Request bodies are capped (see each schema's `maxLength`/`maxItems`) and answer `413`
+    beyond that. Server logs keep no request bodies and no OCR text.
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+servers:
+  - url: "{baseURL}/v1"
+    variables:
+      baseURL:
+        default: https://api.tegola.app
+        description: Placeholder until tegola-server has a host.
+tags:
+  - name: lookup
+    description: One object at a time, from the camera or the add form.
+  - name: match
+    description: Many titles at once, for an import.
+  - name: works
+    description: The work above a release ("also exists on", series).
+  - name: service
+    description: Health of the service.
+  - name: security
+    description: App Attest key registration. The only calls made without an assertion.
+
+# Every operation needs an App Attest key id AND an assertion (one requirement object = both headers). The debug
+# token is an alternative accepted only by development servers. Public operations override this with `security: []`.
+security:
+  - appAttestKeyID: []
+    appAttestAssertion: []
+    requestTimestamp: []
+  - debugToken: []
+
+paths:
+  /types/{typeID}/barcodes/{code}:
+    get:
+      tags: [lookup]
+      operationId: lookupBarcode
+      summary: Identify an object from a barcode or ISBN.
+      description: |
+        Cacheable by the server and any HTTP cache: the same barcode gives the same answer for everyone. The
+        `subtype` and `region` parameters narrow the answer when the collector already chose them (for example
+        "Add to: Jeux · Super Nintendo").
+      parameters:
+        - $ref: "#/components/parameters/TypeID"
+        - name: code
+          in: path
+          required: true
+          description: The digits as read, without spaces.
+          schema:
+            type: string
+            pattern: "^[0-9A-Za-z-]{6,32}$"
+          example: "0602547817327"
+        - name: symbology
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/Symbology"
+        - $ref: "#/components/parameters/Subtype"
+        - $ref: "#/components/parameters/Region"
+        - $ref: "#/components/parameters/AcceptLanguage"
+      responses:
+        "200":
+          description: Zero or more candidates, best first.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: public, max-age=604800
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LookupResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /types/{typeID}/search:
+    post:
+      tags: [lookup]
+      operationId: searchObjects
+      summary: Identify an object from a few words.
+      description: |
+        For objects without a barcode, a title typed by hand, OCR text from a spine or label, or a catalogue number.
+        POST because OCR text can be long and should not end up in URLs or access logs.
+      parameters:
+        - $ref: "#/components/parameters/TypeID"
+        - $ref: "#/components/parameters/AcceptLanguage"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchRequest"
+            example:
+              title: Ridge Racer
+              subtype: ps1
+              region: PAL
+              limit: 5
+      responses:
+        "200":
+          description: Zero or more candidates, best first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LookupResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /types/{typeID}/match:
+    post:
+      tags: [match]
+      operationId: matchBatch
+      summary: Match a batch of extracted import rows.
+      description: |
+        Step 4 of the import (original-spec 49): the phone has already turned each spreadsheet cell into a typed
+        row; the server looks each one up and sorts it into a bucket. `matched` has one strong candidate,
+        `ambiguous` has two or three ("Which Tetris?"), `unknown` has none and stays on the shelf as written.
+        The app sends at most 50 rows per call and calls again for the rest; results come back in request order.
+      parameters:
+        - $ref: "#/components/parameters/TypeID"
+        - $ref: "#/components/parameters/AcceptLanguage"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MatchRequest"
+            example:
+              items:
+                - ref: "r1"
+                  title: Donckey Kong Country 2
+                  subtype: snes
+                  region: PAL
+                - ref: "r2"
+                  title: Tetris
+                  subtype: gb
+                  note: version alternative (cartouche)
+      responses:
+        "200":
+          description: One result per item, in request order.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MatchResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "413":
+          description: More than 50 items.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /works/{workID}:
+    get:
+      tags: [works]
+      operationId: getWork
+      summary: A work and its known releases.
+      description: |
+        Feeds "also exists on" (Doom on six platforms) and series completion. The app compares the releases with
+        what the collector owns on the phone; it never sends what they own.
+      parameters:
+        - name: workID
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/WorkID"
+        - $ref: "#/components/parameters/AcceptLanguage"
+      responses:
+        "200":
+          description: The work.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Work"
+        "404":
+          description: No such work.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /app-attest/challenge:
+    get:
+      tags: [security]
+      operationId: getAttestChallenge
+      summary: A one-time challenge for registering an App Attest key.
+      security: []
+      responses:
+        "200":
+          description: The challenge. Single use, valid for 5 minutes.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttestChallenge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /app-attest/keys:
+    post:
+      tags: [security]
+      operationId: registerAttestKey
+      summary: Register this install's App Attest key.
+      description: |
+        Called once per install, and again if the server answers `401` with type `…/problems/unknown-key` (the key
+        was revoked or the server lost it). The server verifies the attestation object against Apple's App Attest
+        root CA, checks the app id, the challenge and that the environment is `production` (or `development` on a
+        development server), and stores only the key id, its public key and its counter.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttestKeyRegistration"
+      responses:
+        "201":
+          description: Registered.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          description: The attestation didn't verify (wrong app, bad certificate chain, used or expired challenge).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /health:
+    get:
+      tags: [service]
+      operationId: health
+      summary: Whether lookups can be served right now.
+      security: []
+      responses:
+        "200":
+          description: Up, with the types the server can look up.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, types]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok, degraded]
+                  types:
+                    description: Type ids the server has at least one source for.
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TypeID"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+components:
+  securitySchemes:
+    appAttestKeyID:
+      type: apiKey
+      in: header
+      name: X-Tegola-Key-ID
+      description: The base64 App Attest key id registered with `POST /app-attest/keys`. It identifies an install of the app, not a person, and is never linked to anything about the shelf.
+    appAttestAssertion:
+      type: apiKey
+      in: header
+      name: X-Tegola-Assertion
+      description: |
+        A base64 App Attest assertion (`DCAppAttestService.generateAssertion`) over
+        `SHA-256(method + "\n" + path-with-query + "\n" + X-Tegola-Timestamp + "\n" + SHA-256(body))`.
+        The server verifies the signature with the stored public key and rejects a counter that didn't increase.
+    requestTimestamp:
+      type: apiKey
+      in: header
+      name: X-Tegola-Timestamp
+      description: The request time in RFC 3339, covered by the assertion. The server rejects anything more than 5 minutes from its own clock.
+    debugToken:
+      type: apiKey
+      in: header
+      name: X-Tegola-Debug-Token
+      description: Debug builds, simulators and CI only, where App Attest isn't available. Accepted by development servers; the production server answers `403` to any request carrying it.
+
+  parameters:
+    TypeID:
+      name: typeID
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/TypeID"
+    Subtype:
+      name: subtype
+      in: query
+      required: false
+      description: The subtype key from the type file (platform for games, format for music).
+      schema:
+        $ref: "#/components/schemas/SubtypeKey"
+    Region:
+      name: region
+      in: query
+      required: false
+      schema:
+        $ref: "#/components/schemas/Region"
+    AcceptLanguage:
+      name: Accept-Language
+      in: header
+      required: false
+      description: Preferred language for titles and descriptions (Tegola ships English and French).
+      schema:
+        type: string
+      example: fr-FR, fr;q=0.9, en;q=0.8
+
+  responses:
+    Unauthorized:
+      description: |
+        Missing or invalid credentials: no key id, a key the server doesn't know (`type` ends in
+        `/problems/unknown-key`, so register again), a bad signature, a counter that didn't increase, or a timestamp
+        more than 5 minutes off.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Forbidden:
+      description: Valid credentials that aren't allowed here, such as a debug token sent to the production server, or a revoked key.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    BadRequest:
+      description: The request doesn't match this contract.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    TooManyRequests:
+      description: Slow down. The app queues the lookup and retries after `Retry-After` (PLAN §7).
+      headers:
+        Retry-After:
+          description: Seconds to wait.
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Unavailable:
+      description: A source is down. The app keeps the object and queues the lookup.
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+
+  schemas:
+    TypeID:
+      description: The `id` of a type file, e.g. `music`, `video-game`, `board-games`, `thing`.
+      type: string
+      pattern: "^[a-z][a-z0-9-]{1,40}$"
+      examples: [video-game]
+    SubtypeKey:
+      type: string
+      pattern: "^[a-z0-9][a-z0-9-]{0,40}$"
+      examples: [snes, vinyl]
+    Region:
+      description: A region as collectors write it (PAL, NTSC-U, NTSC-J, …) or an ISO 3166-1 alpha-2 country.
+      type: string
+      maxLength: 16
+      examples: [PAL]
+    Symbology:
+      type: string
+      enum: [ean8, ean13, upca, upce, isbn, code39, code128, qr, other]
+    WorkID:
+      description: The server's stable id for a work, opaque to the app.
+      type: string
+      maxLength: 128
+    ReleaseID:
+      description: The server's stable id for a release (one edition on one platform or format), opaque to the app.
+      type: string
+      maxLength: 128
+
+    SearchRequest:
+      description: At least one of `title`, `text` or `catalogueNumber` must be present; the server answers `400` otherwise.
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          maxLength: 300
+        subtitle:
+          description: The type's subtitle role (artist, designer, publisher).
+          type: string
+          maxLength: 300
+        text:
+          description: Raw OCR text, newline-separated, as read from a spine or label.
+          type: string
+          maxLength: 2000
+        catalogueNumber:
+          type: string
+          maxLength: 64
+        year:
+          type: integer
+          minimum: 1800
+          maximum: 2100
+        subtype:
+          $ref: "#/components/schemas/SubtypeKey"
+        region:
+          $ref: "#/components/schemas/Region"
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 5
+
+    MatchRequest:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/MatchItem"
+    MatchItem:
+      type: object
+      additionalProperties: false
+      required: [ref, title]
+      properties:
+        ref:
+          description: The app's handle for the row, echoed back. Not an object id.
+          type: string
+          maxLength: 64
+        title:
+          type: string
+          maxLength: 300
+        subtitle:
+          type: string
+          maxLength: 300
+        year:
+          type: integer
+        subtype:
+          $ref: "#/components/schemas/SubtypeKey"
+        region:
+          $ref: "#/components/schemas/Region"
+        note:
+          description: The words around the title that might identify a variant ("version alternative"). Never the collector's own notes about condition or provenance.
+          type: string
+          maxLength: 300
+    MatchResult:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required: [ref, bucket, candidates]
+            properties:
+              ref:
+                type: string
+              bucket:
+                type: string
+                enum: [matched, ambiguous, unknown]
+              candidates:
+                description: One for `matched`, two or three for `ambiguous`, none for `unknown`.
+                type: array
+                maxItems: 3
+                items:
+                  $ref: "#/components/schemas/Candidate"
+
+    LookupResult:
+      type: object
+      required: [candidates]
+      properties:
+        candidates:
+          type: array
+          maxItems: 10
+          items:
+            $ref: "#/components/schemas/Candidate"
+
+    Candidate:
+      description: One proposed identity. Everything in it is a proposal the collector can refuse.
+      type: object
+      required: [releaseID, typeID, title, confidence, reasons, sources]
+      properties:
+        releaseID:
+          $ref: "#/components/schemas/ReleaseID"
+        workID:
+          $ref: "#/components/schemas/WorkID"
+        typeID:
+          $ref: "#/components/schemas/TypeID"
+        subtype:
+          $ref: "#/components/schemas/SubtypeKey"
+        title:
+          description: The spine's title role.
+          type: string
+        subtitle:
+          description: The spine's subtitle role.
+          type: string
+        year:
+          description: The spine's year role (release year).
+          type: integer
+        region:
+          $ref: "#/components/schemas/Region"
+        contains:
+          description: For a bundle (Heavy Rain + Beyond Two Souls), the works inside it.
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkID"
+        fields:
+          description: Values for the type's own fields, keyed by the field `key` in the type file.
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/FieldValue"
+          examples:
+            - publisher: Namco
+              catalogueNumber: SCES-00001
+              media: disc
+        entries:
+          description: List and log fields (a tracklist), keyed by field `key`; each entry keyed by the field's entry shape.
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: object
+              additionalProperties:
+                type: [string, number, "null"]
+        images:
+          type: array
+          items:
+            $ref: "#/components/schemas/Image"
+        confidence:
+          description: 0 to 1. The app maps it to "you probably own this" bands; it never confirms on its own.
+          type: number
+          minimum: 0
+          maximum: 1
+        reasons:
+          description: Why this candidate was proposed, shown to the collector in the review queue (PD-150).
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Reason"
+        sources:
+          description: Where the data came from, with the attribution a source requires (IGDB requires it).
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Source"
+        externalIDs:
+          description: Ids in other databases, for later re-matching (Wikidata, IGDB, MusicBrainz, BoardGameGeek, Discogs).
+          type: object
+          additionalProperties:
+            type: string
+
+    FieldValue:
+      description: |
+        The JSON shape follows the field's kind in the type file: text, choice → string; number → number;
+        yesNo → boolean; year → integer; date → string (full-date); yearRange → {from, to}.
+        Scales, logs and photos are never filled by a lookup.
+      oneOf:
+        - type: string
+        - type: number
+        - type: boolean
+        - type: object
+          required: [from, to]
+          properties:
+            from:
+              type: integer
+            to:
+              type: integer
+
+    Reason:
+      type: object
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          enum: [barcode, catalogueNumber, title, ocr, region, subtype, typoCorrected, bundleSplit]
+        detail:
+          description: A short phrase for the collector, in the requested language ("Barcode matched exactly").
+          type: string
+
+    Source:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          examples: [IGDB]
+        url:
+          type: string
+          format: uri
+        attribution:
+          description: Text the app must show next to data from this source, when the source requires it.
+          type: string
+
+    Image:
+      type: object
+      required: [role, url]
+      properties:
+        role:
+          type: string
+          enum: [front, back, spine, media, thumbnail]
+        url:
+          type: string
+          format: uri
+        width:
+          type: integer
+        height:
+          type: integer
+
+    Work:
+      type: object
+      required: [workID, title, releases]
+      properties:
+        workID:
+          $ref: "#/components/schemas/WorkID"
+        title:
+          type: string
+        series:
+          description: Series or franchise names, for series completion.
+          type: array
+          items:
+            type: string
+        releases:
+          type: array
+          items:
+            type: object
+            required: [releaseID, typeID, title]
+            properties:
+              releaseID:
+                $ref: "#/components/schemas/ReleaseID"
+              typeID:
+                $ref: "#/components/schemas/TypeID"
+              subtype:
+                $ref: "#/components/schemas/SubtypeKey"
+              title:
+                type: string
+              year:
+                type: integer
+              region:
+                $ref: "#/components/schemas/Region"
+
+    AttestChallenge:
+      type: object
+      required: [challenge, expiresAt]
+      properties:
+        challenge:
+          description: Base64, at least 32 random bytes. Single use.
+          type: string
+          minLength: 44
+          maxLength: 128
+        expiresAt:
+          type: string
+          format: date-time
+    AttestKeyRegistration:
+      type: object
+      additionalProperties: false
+      required: [keyID, attestation, challenge]
+      properties:
+        keyID:
+          description: Base64 key id from `DCAppAttestService.generateKey`.
+          type: string
+          maxLength: 128
+        attestation:
+          description: Base64 attestation object from `DCAppAttestService.attestKey`, with `SHA-256(challenge)` as client data, where `challenge` is the UTF-8 bytes of the challenge string exactly as `GET /app-attest/challenge` returned it.
+          type: string
+          maxLength: 16384
+        challenge:
+          description: The challenge from `GET /app-attest/challenge`, echoed back.
+          type: string
+          maxLength: 128
+    Problem:
+      description: RFC 9457 problem details.
+      type: object
+      required: [title, status]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          default: about:blank
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
