@@ -14,14 +14,27 @@ Plan: `tasks/plan.md`, M1. Report: `docs/milestones/M1.md`.
 - [x] T1.8 tegola's CLAUDE.md, DECISIONS and HANDOFF point here
 - [ ] Separate review agent over the M1 branch before merge
 
-## M2 · persistence
+## M2 · persistence (Postgres, D-17)
 
-Broken down at the start of M2 (`tasks/plan.md`).
+Plan: `tasks/plan.md`, M2. Report: `docs/milestones/M2.md`.
+
+- [x] T2.1 Store protocols, failures as 503, `degraded` health
+- [x] T2.2 `PostgresStore` and migrations
+- [x] T2.3 `TEGOLA_DATABASE_URL`, required in production
+- [x] T2.4 Client as a service, migrations before serving
+- [x] T2.5 Postgres in Compose and CI, smoke checks
+- [x] T2.6 Undeclared 503s keep their headers and body (D-18)
+- [x] T2.7 Docs and report
+- [ ] Separate review agent over M1 and M2
+
+## M3 · first sources
+
+Waits on the owner's choice of sources (PLAN §9, question 1).
 
 ## Open follow-ups
 
 - Owner: check the pinned root's fingerprint against apple.com once (D-4).
-- Owner: answer PLAN §9 (sources, hosting, persistence, Team ID, shared caches), deferred until release
+- Owner: answer PLAN §9 (sources, hosting, Team ID, shared caches; persistence answered: Postgres), deferred until release
   (`docs/DEPLOY.md`, go-live checklist).
 - [x] Docker: image built and checked, Caddy + server stack, `docs/DEPLOY.md`, `scripts/docker-smoke.sh`, CI job
   (D-16).

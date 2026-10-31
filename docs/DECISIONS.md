@@ -82,7 +82,7 @@ contract defines: `/problems/unknown-key` (register again) and 403 for a revoked
 replay, stale timestamp…) goes to the log as a code. Body decoding failures, which the runtime reports as 500, become
 400 (`EdgeMiddleware.problem`).
 
-### D-8 · Milestone 1 keeps keys in memory
+### D-8 · Milestone 1 keeps keys in memory (superseded in production by D-17)
 
 **Decision.** `InMemoryAttestKeyStore` behind the `AttestKeyStore` protocol. A restart loses every key, and each
 install re-registers on its next call through the contract's `unknown-key` path, so nothing breaks, it just costs one
@@ -172,3 +172,54 @@ design work.
   a debug token, then the stack over HTTPS: health, HSTS, no `Server`, 401, 404 outside `/v1`, HTTP→HTTPS, no
   published server port) locally and in CI's `docker` job.
 - **Not decided here:** the host, the domain, persistence, sources and a shared cache. They are the owner's (PLAN §9).
+
+### D-17 · Postgres for keys and challenges (M2)
+
+> Owner: "As DB I feel like pgsql should be our choice." (PLAN §9, question 3)
+
+**Decision.** `PostgresStore` implements `AttestKeyStore` and `ChallengeStore` on Postgres through PostgresNIO's
+`PostgresClient`, which runs as a service of the application. The in-memory stores stay for tests and for a
+development server without a database.
+
+- **Required in production.** `ServerConfiguration.load` refuses to start a production server without
+  `TEGOLA_DATABASE_URL` (exit 78): without it every restart would forget every key. Development without one keeps
+  the in-memory stores.
+- **The URL** is `postgres://user:password@host:port/database?sslmode=…`. `sslmode` defaults to `verify-full`
+  (encrypted, certificate and host name checked, TLS 1.2+); `require` encrypts without checking; `disable` is for
+  the Compose stack's internal network only. `sslrootcert=` trusts a provider's CA. Any other parameter is refused.
+  `DatabaseSettings` never prints the password: not in `description`, `debugDescription` or its mirror (tested).
+- **Schema** (migration 1): `attest_keys` (`key_id` 32 bytes, `public_key` 65 bytes, `counter` 0…2³²−1,
+  `environment`, `revoked`, `registered_at`), with `CHECK` constraints as a last line of defence, and
+  `attest_challenges` (`challenge`, `expires_at`, indexed). Migrations are versioned in `tegola_schema_migrations`,
+  each applied in its own transaction under `pg_advisory_xact_lock`, so several instances can start at once. They run
+  before the server binds its port; a database that doesn't answer within 60 seconds stops the server.
+- **Statements are parameterised** (PostgresNIO binds every interpolated value). Only the constant migration
+  statements are sent as text.
+- **The counter rule** is one statement: `UPDATE … SET counter = $new WHERE key_id = $id AND counter < $new RETURNING
+  1`. Of concurrent replays exactly one updates a row (tested with 20 at once). Registration is
+  `INSERT … ON CONFLICT DO NOTHING`, which keeps the stored counter and revocation, as D-8's in-memory store does.
+- **Challenges** expire by the server's clock (stored as `expires_at`); expired ones are deleted before each issue,
+  and issuing stops at `maximumOutstandingChallenges` (503).
+- **A store that can't answer** is a 503 with `Retry-After: 5` and `/problems/unavailable`, for signed calls and
+  registration alike. Never a 401, which would make the app throw its key away, and never a pass. `/health` answers
+  `degraded` when `SELECT 1` doesn't come back within 2 seconds.
+- **In the Compose stack**, Postgres 17 runs on a `db` network that is `internal` (no route out) and that only the
+  server joins. It publishes no port, has a read-only root with tmpfs for its socket, the five capabilities its
+  entrypoint needs, `no-new-privileges`, and `scram-sha-256` authentication. The password is `TEGOLA_DB_PASSWORD`,
+  hex so it needs no escaping in the URL. Its data is the `postgres_data` volume.
+- **Tests:** `StoreTests` run every rule against both stores: in-memory always, and Postgres when
+  `TEGOLA_TEST_DATABASE_URL` is set (CI's `postgres` service). Each test gets a schema of its own, migrated from
+  scratch and dropped afterwards. `StoreFailureTests` cover the 503s and `degraded`; `scripts/docker-smoke.sh` checks
+  the migration, the restart, the isolation of the database from Caddy, and that the password never reaches the log.
+- **Rate limits** stay in memory, per instance (D-9). More than one instance needs them shared too.
+
+### D-18 · A 503 the contract doesn't declare is thrown, not returned
+
+**Gap.** For an operation without a declared 503, a handler returned the generated `.undocumented(statusCode: 503,
+payload)`. The generated server writes only the status of an undocumented response and drops the payload, so those
+answers went out as an empty 503 with no `Retry-After` (found by `registrationIs503WhenTheStoresAreDown`). That
+affected M1's "challenge store full" and `getWork`'s source outage too.
+
+**Decision.** Handlers throw `ServiceUnavailable(retryAfter:)` instead, and `EdgeMiddleware` answers it with the
+problem document and `Retry-After`. No handler returns `.undocumented`. `aSourceOutageOnAWorkIs503WithRetryAfterAndAProblem`
+and `StoreFailureTests` pin it.

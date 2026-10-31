@@ -22,6 +22,9 @@ public struct ServerConfiguration: Sendable {
   /// How many reverse proxies in front of the server append to `X-Forwarded-For`. 0 (the default) ignores the
   /// header, so a client can't choose its own rate-limit bucket.
   public var trustedProxyHops: Int
+  /// Postgres, from `TEGOLA_DATABASE_URL`. Required in production (D-17); without it a development server keeps keys
+  /// and challenges in memory.
+  public var database: DatabaseSettings?
   public var limits: Limits
 
   public struct Limits: Sendable {
@@ -49,6 +52,7 @@ public struct ServerConfiguration: Sendable {
     port: Int = 8080,
     debugToken: String? = nil,
     trustedProxyHops: Int = 0,
+    database: DatabaseSettings? = nil,
     limits: Limits = Limits()
   ) throws(ConfigurationError) {
     self.environment = environment
@@ -57,6 +61,7 @@ public struct ServerConfiguration: Sendable {
     self.port = port
     self.debugToken = debugToken
     self.trustedProxyHops = trustedProxyHops
+    self.database = database
     self.limits = limits
     try validate()
   }
@@ -80,13 +85,21 @@ public struct ServerConfiguration: Sendable {
       }
       return value
     }
+    let database = try env["TEGOLA_DATABASE_URL"].flatMap { $0.isEmpty ? nil : $0 }.map {
+      (raw) throws(ConfigurationError) in try DatabaseSettings.parse(raw)
+    }
+    // A production server without a database would forget every key at each restart: refuse to start (D-17).
+    if environment == .production, database == nil {
+      throw .invalid("TEGOLA_DATABASE_URL is required in production (postgres://…)")
+    }
     return try ServerConfiguration(
       environment: environment,
       appID: appID,
       host: env["TEGOLA_HOST"] ?? "127.0.0.1",
       port: port ?? 8080,
       debugToken: env["TEGOLA_DEBUG_TOKEN"].flatMap { $0.isEmpty ? nil : $0 },
-      trustedProxyHops: hops ?? 0
+      trustedProxyHops: hops ?? 0,
+      database: database
     )
   }
 

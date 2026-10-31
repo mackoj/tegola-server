@@ -49,7 +49,8 @@ iPhone (TegolaLookupAPI client, App Attest) ──HTTPS──► reverse proxy (
   handlers (`LookupAPI`), middlewares, `ServerConfiguration`, in-memory stores (`InMemoryAttestKeyStore`,
   `ChallengeStore`, `RateLimiter`), the `LookupService` protocol.
 - **`tegola-server`**: `main.swift` loads the configuration, refuses to start on a bad one, and runs.
-- **Stores** sit behind protocols so milestone 2 swaps memory for a database without touching handlers.
+- **Stores** sit behind protocols (`AttestKeyStore`, `ChallengeStore`): `PostgresStore` in production (D-17), the
+  in-memory ones in tests and development.
 
 ## 3. The contract
 
@@ -97,7 +98,10 @@ volumetric abuse; a curious operator reading logs.
 | Unsafe deployment by omission | Production is the default; loopback is the default; `TEGOLA_APP_ID` is required; start fails on any bad value | `ServerConfiguration.load` |
 | Brute force on the debug token | ≥ 32 characters, constant-time comparison, rate limits | `ServerConfiguration`, `AppAttestMiddleware` |
 | Challenge reuse or flooding | Single use, consumed before verification, 5-minute life, bounded store | `ChallengeStore` |
-| Counter rewind by re-registering a key | Re-registration keeps the stored counter; revoked keys stay revoked | `InMemoryAttestKeyStore.register` |
+| Counter rewind by re-registering a key | Re-registration keeps the stored counter; revoked keys stay revoked | `AttestKeyStore.register` (`ON CONFLICT DO NOTHING` in Postgres) |
+| Concurrent replays across instances | One conditional `UPDATE … WHERE counter < $new`: exactly one passes | `PostgresStore.advanceCounter` |
+| A database outage read as "no key" or "replay" | A store that can't answer is 503 with `Retry-After`, never 401 or a pass; `/health` says `degraded` | `AppAttestMiddleware`, `LookupAPI`, D-17 |
+| Database exposure | Internal-only network, no published port, `scram-sha-256`; outside the stack, `verify-full` TLS by default; parameterised statements; the password never printed | `docker-compose.yml`, `DatabaseSettings`, `PostgresStore` |
 | Oversized or hostile bodies | `Content-Length` rejected at the edge, body read with a cap (413), strict CBOR with bounded lengths and depth, unknown JSON keys refused, every limit validated | `EdgeMiddleware`, `AppAttestMiddleware`, `CBORReader`, `Validation` |
 | Volumetric abuse, quota draining | Token buckets per IP, per key, and a stricter one for registration; bounded tables; idle timeout | `RateLimiter`, `EdgeMiddleware` |
 | Spoofed client address | `X-Forwarded-For` ignored unless `TEGOLA_TRUSTED_PROXY_HOPS`; then only the trusted hop counts | `EdgeMiddleware.clientAddress` |
@@ -108,9 +112,8 @@ volumetric abuse; a curious operator reading logs.
 | Secrets in the repo | Environment only; `.env` ignored; secret scan in CI | `scripts/secret-scan.sh` |
 | A tampered trust anchor | Apple's root pinned in source, its SHA-256 fingerprint checked by a test | `AppleRootCA`, `appleRootIsPinned` |
 
-**Accepted for milestone 1** (D-8, D-9): keys and buckets live in memory, so a restart makes every install register
-again (the contract's `unknown-key` path) and limits apply per instance. App Attest's fraud-metric receipts aren't
-checked yet (D-5).
+**Accepted for now** (D-9, D-5): rate-limit buckets live in memory, so limits apply per instance. App Attest's
+fraud-metric receipts aren't checked yet.
 
 ## 6. Operations
 
@@ -142,7 +145,7 @@ checked yet (D-5).
 | Milestone | Scope | Exit test |
 |---|---|---|
 | **M1 · foundation** (done) | Package, generated server, App Attest, every §5 control, configuration, tests, CI, Dockerfile, docs; tegola told it can work here | `scripts/ci.sh` green; a binary that serves `/v1/health` and refuses unsigned lookups |
-| **M2 · persistence** | A database-backed `AttestKeyStore` (SQLite or Postgres, atomic counter update), challenges with it; optional receipt check | Restart keeps keys; concurrent replays: exactly one passes |
+| **M2 · persistence** (done) | `PostgresStore` for keys and challenges, migrations, required in production; Postgres in the Compose stack (D-17) | Restart keeps keys; concurrent replays: exactly one passes |
 | **M3 · first sources** | One source per launch type (§4), caching, timeouts, circuit breaker, attribution | Recorded-response tests per source; `/health` lists the types |
 | **M4 · production** | Host, domain (the contract's placeholder `api.tegola.app`), proxy, secrets, monitoring; a run against the real app on a device | The app's M6 lookup flow works end to end on a device |
 
@@ -156,7 +159,8 @@ need with docker; I will provide those informations when we are close to release
 
 1. **Sources:** which databases per type (§4), and who registers the API keys.
 2. **Hosting:** where it runs (a VPS with Caddy, Fly.io, a container platform), and the real domain.
-3. **Persistence:** SQLite on a volume (one instance) or Postgres (managed, room to scale) for M2.
+3. ~~**Persistence**~~ **Answered:** Postgres (owner, 2026-10-31; D-17). Still open: the stack's Postgres or a managed
+   one, decided with the hosting.
 4. **Team id:** the Apple Team ID for `TEGOLA_APP_ID`.
 5. **Shared caches:** the contract makes barcode answers `public`; a CDN in front would serve cached answers without
    App Attest. Fine for public catalogue data, or should the cache stay private to the server (D-14)?

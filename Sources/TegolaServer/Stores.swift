@@ -1,22 +1,46 @@
 public import AppAttest
 public import Foundation
 
-/// Registered App Attest keys. The in-memory store is v1's (DECISIONS D-8): a restart loses every key, and each app
-/// re-registers on the `401 …/problems/unknown-key` the contract defines. A persistent store implements the same
-/// protocol; `advanceCounter` must stay atomic there too (a conditional `UPDATE … WHERE counter < $new`).
+/// Registered App Attest keys. Production keeps them in Postgres (`PostgresStore`, D-17); tests and development
+/// servers without `TEGOLA_DATABASE_URL` keep them in memory (`InMemoryAttestKeyStore`), where a restart loses every
+/// key and each install re-registers through the contract's `unknown-key` path (D-8).
+///
+/// A store that can't answer throws; the caller answers 503 and never treats the failure as "no key" or "replay".
 public protocol AttestKeyStore: Sendable {
-  /// Stores a newly attested key. A key id that is already registered keeps its stored counter, so re-registering
-  /// can't wind the counter back and reopen old assertions.
-  func register(_ key: AttestedKey) async
-  func key(id: Data) async -> AttestKeyRecord?
+  /// Stores a newly attested key. A key id that is already registered keeps its stored counter and revocation, so
+  /// re-registering can't wind the counter back and reopen old assertions, nor bring a revoked key back.
+  func register(_ key: AttestedKey) async throws
+  func key(id: Data) async throws -> AttestKeyRecord?
   /// Sets the counter to `counter` only if it is greater than the stored one, atomically. `false` is a replay.
-  func advanceCounter(id: Data, to counter: UInt32) async -> Bool
-  func revoke(id: Data) async
+  func advanceCounter(id: Data, to counter: UInt32) async throws -> Bool
+  func revoke(id: Data) async throws
 }
 
 public struct AttestKeyRecord: Sendable, Equatable {
   public var key: AttestedKey
   public var revoked: Bool
+
+  public init(key: AttestedKey, revoked: Bool) {
+    self.key = key
+    self.revoked = revoked
+  }
+}
+
+/// Single-use registration challenges: 32 random bytes, base64, valid `lifetime` seconds, gone once consumed whether
+/// the attestation then verifies or not. Stores are bounded so a flood can't exhaust memory or disk.
+public protocol ChallengeStore: Sendable {
+  /// A new challenge, or `nil` when the store is full even after dropping the expired ones.
+  func issue() async throws -> (challenge: String, expiresAt: Date)?
+  /// Removes the challenge and says whether it was issued here and is still valid.
+  func consume(_ challenge: String) async throws -> Bool
+}
+
+enum ChallengeGenerator {
+  static func make() -> String {
+    var generator = SystemRandomNumberGenerator()
+    let bytes = (0..<32).map { _ in UInt8.random(in: .min ... .max, using: &generator) }
+    return Data(bytes).base64EncodedString()
+  }
 }
 
 public actor InMemoryAttestKeyStore: AttestKeyStore {
@@ -47,9 +71,7 @@ public actor InMemoryAttestKeyStore: AttestKeyStore {
   }
 }
 
-/// Single-use registration challenges. Each one is 32 random bytes, lives `lifetime` seconds and is gone once
-/// consumed, whether the attestation then verifies or not. The store is bounded so a flood can't exhaust memory.
-public actor ChallengeStore {
+public actor InMemoryChallengeStore: ChallengeStore {
   private var expiries: [String: Date] = [:]
   private let lifetime: TimeInterval
   private let capacity: Int
@@ -61,20 +83,16 @@ public actor ChallengeStore {
     self.now = now
   }
 
-  /// A new challenge, or `nil` when the store is full even after dropping the expired ones.
   public func issue() -> (challenge: String, expiresAt: Date)? {
     let current = now()
     if expiries.count >= capacity { expiries = expiries.filter { $0.value > current } }
     guard expiries.count < capacity else { return nil }
-    var generator = SystemRandomNumberGenerator()
-    let bytes = (0..<32).map { _ in UInt8.random(in: .min ... .max, using: &generator) }
-    let challenge = Data(bytes).base64EncodedString()
+    let challenge = ChallengeGenerator.make()
     let expiresAt = current.addingTimeInterval(lifetime)
     expiries[challenge] = expiresAt
     return (challenge, expiresAt)
   }
 
-  /// Removes the challenge and says whether it was issued here and is still valid.
   public func consume(_ challenge: String) -> Bool {
     guard let expiresAt = expiries.removeValue(forKey: challenge) else { return false }
     return expiresAt > now()

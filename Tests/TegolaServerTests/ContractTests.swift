@@ -110,6 +110,19 @@ struct ContractTests {
     }
   }
 
+  /// `getWork` declares no 503, and the generated server would drop an `undocumented` answer's headers and body
+  /// (D-18): the outage still arrives as a problem document with `Retry-After`.
+  @Test func aSourceOutageOnAWorkIs503WithRetryAfterAndAProblem() async throws {
+    let server = try TestServer(environment: .development, lookups: CannedLookups(unavailable: true))
+    try await server.run { client in
+      try await client.execute(uri: "/v1/works/w1", method: .get, headers: Self.debugHeaders) { response in
+        #expect(response.status == .serviceUnavailable)
+        #expect(response.headers[.retryAfter] == "30")
+        #expect(problemType(response) == "/problems/unavailable")
+      }
+    }
+  }
+
   @Test func matchAnswersInRequestOrderWithBuckets() async throws {
     let lookups = CannedLookups(candidates: [candidate("gb", confidence: 0.6), candidate("nes", confidence: 0.55)])
     let (status, text) = try await post(

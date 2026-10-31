@@ -86,6 +86,9 @@ struct EdgeMiddleware<Context: RemoteAddressRequestContext>: RouterMiddleware {
       }
     }
     if let error = error as? ServerError {
+      if let unavailable = error.underlyingError as? ServiceUnavailable {
+        return ProblemEncoding.response(.unavailable, retryAfter: max(1, unavailable.retryAfter))
+      }
       if error.underlyingError is DecodingError { return ProblemEncoding.response(.badRequest) }
       switch error.httpStatus {
       case .badRequest: return ProblemEncoding.response(.badRequest)
