@@ -149,3 +149,26 @@ way around the proof of "what calls". Until the owner decides, deploy without a 
 path), status, milliseconds, Hummingbird's request id. Plus `auth failed` with the operation and a reason code, and
 `attestation rejected` / `key registered` with a reason or environment. Never a body, a query string, OCR text, a key
 id, an IP address or a header value (tegola PLAN §2.7: "a log line records shape, never content").
+
+### D-16 · Deployment: a Compose stack ready before the answers
+
+> Owner: "I don't have response for this at the moment so prepare what you need with docker; I will provide those informations maybe when we will be close to release and need to push in prod something."
+
+**Decision.** Production is a Docker Compose stack (`docker-compose.yml`): Caddy in front, the server behind it on a
+private network with no published port. Everything that waits on the owner's answers (PLAN §9) is a value in `.env`
+(`deploy/env.example`) or a named change in `docs/DEPLOY.md`'s go-live checklist, so going live doesn't need new
+design work.
+
+- **Caddy** gets and renews the certificate, redirects HTTP, speaks TLS 1.2/1.3, caps bodies at 256 KB, forwards only
+  `/v1/*` (anything else is 404), health-checks `/v1/health`, drops the `Server` header, and has no admin API and no
+  access log (its log would hold IPs and full URLs, against D-15). It replaces any client-sent `X-Forwarded-For` with
+  the client's address, the one hop the server trusts (D-9). It receives only `TEGOLA_DOMAIN`, never the server's
+  env file.
+- **The server container** runs as uid 10001 with a read-only root, no capabilities, `no-new-privileges`, and memory
+  and process limits. Its env file is `.env`, git-ignored.
+- **The image** builds behind a TLS-intercepting proxy through an optional build secret (`proxy_ca`), used only by
+  `swift package resolve`. `scripts/docker-smoke.sh` checks that it never reaches the image.
+- **Checked** by `scripts/docker-smoke.sh` (15 checks: the image's user, the exit-78 refusals, health, 401, 403 for
+  a debug token, then the stack over HTTPS: health, HSTS, no `Server`, 401, 404 outside `/v1`, HTTP→HTTPS, no
+  published server port) locally and in CI's `docker` job.
+- **Not decided here:** the host, the domain, persistence, sources and a shared cache. They are the owner's (PLAN §9).

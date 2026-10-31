@@ -1,0 +1,34 @@
+# The TLS front of tegola-server (DECISIONS D-10, D-16). Caddy gets and renews the certificate for $TEGOLA_DOMAIN
+# (ACME), redirects HTTP to HTTPS, speaks TLS 1.2 and 1.3 only, and passes requests to the server on the private
+# network. HSTS and the other security headers come from the server itself.
+{
+	# No admin API: a config change means a restart.
+	admin off
+	# Never write to the container's trust store (read-only); only the localhost rehearsal uses Caddy's own CA.
+	skip_install_trust
+}
+
+{$TEGOLA_DOMAIN} {
+	tls {
+		protocols tls1.2 tls1.3
+	}
+	# The server caps bodies at 256 KiB too; refusing here keeps big uploads off the private network.
+	request_body {
+		max_size 256KB
+	}
+	# Only the contract's base path reaches the server.
+	handle /v1/* {
+		reverse_proxy tegola-server:8080 {
+			# Caddy replaces any X-Forwarded-For a client sends with the client's own address, which is the one hop
+			# the server trusts (TEGOLA_TRUSTED_PROXY_HOPS=1, D-9).
+			health_uri /v1/health
+			health_interval 30s
+			health_timeout 5s
+		}
+	}
+	handle {
+		respond 404
+	}
+	header -Server
+	# No access log: the server logs shape only (D-15), and Caddy's log would hold IPs and full URLs.
+}

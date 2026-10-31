@@ -1,14 +1,26 @@
+# syntax=docker/dockerfile:1
+# The production image (DECISIONS D-10, D-16). Build: `docker build -t tegola-server .`
+# Behind a TLS-intercepting proxy (some CI or cloud sandboxes), pass its CA as a build secret; it is used only to fetch
+# the Swift packages and never reaches the image:
+#   docker build --secret id=proxy_ca,src=/path/to/ca.pem --build-arg HTTPS_PROXY=… -t tegola-server .
+
 # Build: the Swift image, a release build with the Swift runtime linked in statically.
 FROM swift:6.4-noble AS build
 WORKDIR /src
 COPY Package.swift Package.resolved ./
-RUN swift package resolve
+RUN --mount=type=secret,id=proxy_ca,required=false \
+  if [ -s /run/secrets/proxy_ca ]; then \
+    export GIT_SSL_CAINFO=/run/secrets/proxy_ca SSL_CERT_FILE=/run/secrets/proxy_ca; \
+  fi; \
+  swift package resolve
 COPY api api
 COPY Sources Sources
+# The manifest declares the test targets too; their sources stay in this stage.
+COPY Tests Tests
 RUN swift build -c release --static-swift-stdlib --product tegola-server \
   && cp "$(swift build -c release --show-bin-path)/tegola-server" /tegola-server
 
-# Run: a slim Ubuntu with CA certificates and nothing else, as an unprivileged user (DECISIONS D-10).
+# Run: a slim Ubuntu with CA certificates (for the lookup sources, M3) and nothing else, as an unprivileged user.
 FROM ubuntu:noble
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates tzdata \
@@ -17,7 +29,8 @@ RUN apt-get update \
 COPY --from=build /tegola-server /usr/local/bin/tegola-server
 USER 10001:10001
 # In a container the server listens on all interfaces of its own network namespace; only the reverse proxy reaches
-# it. TEGOLA_APP_ID has no default: the server refuses to start without it.
+# it. TEGOLA_APP_ID has no default: the server refuses to start without it. One proxy (Caddy) appends the client's
+# address to X-Forwarded-For.
 ENV TEGOLA_HOST=0.0.0.0 TEGOLA_PORT=8080 TEGOLA_ENVIRONMENT=production TEGOLA_TRUSTED_PROXY_HOPS=1
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/tegola-server"]

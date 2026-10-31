@@ -114,8 +114,11 @@ checked yet (D-5).
 
 ## 6. Operations
 
-- **One instance** behind a TLS-terminating reverse proxy (Caddy: automatic certificates, HTTP→HTTPS, HSTS), on a
-  host or container platform. `Dockerfile` builds a static binary into a slim image running as uid 10001.
+- **One instance** behind a TLS-terminating reverse proxy, as a Docker Compose stack (`docker-compose.yml`): Caddy
+  (automatic certificates, HTTP→HTTPS, TLS 1.2/1.3, `/v1/*` only) in front of the server, which publishes no port.
+  `Dockerfile` builds a static binary into a slim image running as uid 10001, read-only and without capabilities.
+  `docs/DEPLOY.md` is the runbook and the go-live checklist; `scripts/docker-smoke.sh` checks the image and the stack
+  (D-16).
 - **Configuration** in the environment (README table). Source keys arrive the same way in milestone 3, from the
   platform's secret store.
 - **Logs** to stdout as `key=value` lines: one per request, plus `auth failed` and `attestation rejected` with a
@@ -146,6 +149,10 @@ checked yet (D-5).
 Tegola's client needs the server from its M6 (tegola HANDOFF), so M2–M4 can follow the app's pace.
 
 ## 9. Open questions for the owner
+
+Deferred by the owner until release (2026-10-31): "I don't have response for this at the moment so prepare what you
+need with docker; I will provide those informations when we are close to release." Each answer's place is in
+`docs/DEPLOY.md`, "Go-live checklist"; nothing else waits on them.
 
 1. **Sources:** which databases per type (§4), and who registers the API keys.
 2. **Hosting:** where it runs (a VPS with Caddy, Fly.io, a container platform), and the real domain.

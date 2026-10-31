@@ -21,5 +21,7 @@ Broken down at the start of M2 (`tasks/plan.md`).
 ## Open follow-ups
 
 - Owner: check the pinned root's fingerprint against apple.com once (D-4).
-- Owner: answer PLAN §9 (sources, hosting, persistence, Team ID, shared caches).
-- Build the Docker image once on a machine with Docker; it wasn't built in the session that wrote it.
+- Owner: answer PLAN §9 (sources, hosting, persistence, Team ID, shared caches), deferred until release
+  (`docs/DEPLOY.md`, go-live checklist).
+- [x] Docker: image built and checked, Caddy + server stack, `docs/DEPLOY.md`, `scripts/docker-smoke.sh`, CI job
+  (D-16).

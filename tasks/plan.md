@@ -39,5 +39,6 @@ tests, caching, timeouts, a circuit breaker, attribution in `Candidate.sources`.
 
 ## M4 · production
 
-Host, domain, proxy and secrets (PLAN §9, question 2), monitoring of the `auth failed` and 429 rates, and an end-to-end
-run with the app on a device (tegola M6).
+Prepared in M1 (D-16): the image, the Caddy + server Compose stack, `docs/DEPLOY.md` and its go-live checklist, and
+`scripts/docker-smoke.sh` in CI. Left for M4: the owner's answers (PLAN §9) filled in per the checklist, a host and
+DNS record, monitoring of the `auth failed` and 429 rates, and an end-to-end run with the app on a device (tegola M6).

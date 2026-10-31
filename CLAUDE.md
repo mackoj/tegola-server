@@ -27,7 +27,8 @@ change in tegola (or the reverse), make it there too, on its own branch and PR, 
 - **Toolchain:** on the Mac, `xcrun swift …` (swiftly's `swift` breaks nothing here, but the scripts use `xcrun` for
   parity with tegola). On Linux and in cloud sessions, `swift`.
 - **Tests:** `scripts/test.sh [<Suite>]`; `scripts/ci.sh` runs the full gate (tests, `swift format lint --strict`,
-  contract lint, contract drift, secret scan). CI runs the same gate on every push.
+  contract lint, contract drift, secret scan). `scripts/docker-smoke.sh` checks the image and the Caddy stack. CI runs
+  both on every push.
 - **Workflow:** one task, one commit or PR into the milestone branch; a separate review agent before a milestone is
   marked ready; a milestone branch merges into `main` once its report is written.
 - **Attribution:** commits and PRs carry no Claude trailers or footers.
