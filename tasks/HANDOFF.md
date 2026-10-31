@@ -3,7 +3,7 @@
 The state of the work for whoever picks it up next: a new session, another agent, or the owner. Read this first, keep
 it short and current.
 
-**Updated:** 2026-10-31, M1 done on `claude/tegola-hummingbird-bff-9ad714`, PR open into `main`. M2 is next.
+**Updated:** 2026-10-31, M1 merged into `main` (PR #1), with tegola's contract wording (tegola PR #7). M2 is next.
 
 ## Where things stand
 
@@ -15,7 +15,7 @@ it short and current.
   contract drift, secret scan. The binary was run: it refuses a bad config (exit 78), serves `/v1/health` with the
   security headers, answers 401 to an unsigned lookup and 403 to a debug token in production.
 - **Not verified:** the Docker image (no Docker in the session); a real device's attestation (needs the app's M6).
-- **tegola** knows about this repo: its `CLAUDE.md` ("Companion repo"), D-34 and its HANDOFF.
+- **tegola** knows about this repo: its `CLAUDE.md` ("Companion repo"), D-41 and its HANDOFF.
 
 ## Run it locally
 
