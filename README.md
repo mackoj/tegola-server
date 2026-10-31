@@ -19,8 +19,9 @@ The app generates its client from that file; this server generates its routes an
 | `POST /v1/app-attest/keys` | none (the attestation is the proof) | Registers an install's App Attest key |
 | `GET /v1/health` | none | Up, and which types have a source |
 
-**Status:** milestone 1 (`docs/milestones/M1.md`). The contract, App Attest and every security control are in place
-and tested. No database source is connected yet: lookups answer "no match" and `/health` lists no types (D-12).
+**Status:** milestone 2 (`docs/milestones/M2.md`). The contract, App Attest and every security control are in place
+and tested; registered keys live in Postgres (D-17). No lookup source is connected yet: lookups answer "no match" and
+`/health` lists no types (D-12).
 
 ## Security model, in one screen
 
@@ -47,7 +48,7 @@ Needs Swift 6.4 (Xcode 27 on the Mac, or the `swift:6.4-noble` image on Linux).
 
 ```sh
 git clone https://github.com/mackoj/tegola-server.git && cd tegola-server
-scripts/test.sh                 # build and test → build/test-summary.md
+scripts/test.sh                 # build and test → build/test-summary.md (TEGOLA_TEST_DATABASE_URL adds Postgres)
 scripts/ci.sh                   # the full gate → build/ci-summary.md
 
 # A development server on http://127.0.0.1:8080, accepting a debug token (simulators, CI):
@@ -74,6 +75,7 @@ Everything comes from the environment. A missing or unsafe value stops the serve
 | `TEGOLA_HOST` | `127.0.0.1` | Listen address |
 | `TEGOLA_PORT` | `8080` | Listen port |
 | `TEGOLA_TRUSTED_PROXY_HOPS` | `0` | Reverse proxies that append to `X-Forwarded-For`; 0 ignores the header |
+| `TEGOLA_DATABASE_URL` | (required in production) | `postgres://user:password@host:5432/db?sslmode=verify-full` (`require`, or `disable` on a private network; `sslrootcert=/path` for a provider's CA). Without it, a development server keeps keys in memory |
 | `LOG_LEVEL` | `info` | swift-log level |
 
 ## Deploy
@@ -116,6 +118,7 @@ scripts/                         test, ci, docker-smoke, sync-contract, lint-api
 | [apple/swift-crypto](https://github.com/apple/swift-crypto) | SHA-256, P-256 ECDSA |
 | [apple/swift-certificates](https://github.com/apple/swift-certificates), [swift-asn1](https://github.com/apple/swift-asn1) | The attestation's certificate chain and nonce extension |
 | [apple/swift-log](https://github.com/apple/swift-log) | Logging |
+| [vapor/postgres-nio](https://github.com/vapor/postgres-nio), [apple/swift-nio-ssl](https://github.com/apple/swift-nio-ssl), [swift-server/swift-service-lifecycle](https://github.com/swift-server/swift-service-lifecycle) | Postgres client (keys and challenges), its TLS, its lifecycle |
 
 Versions are pinned in `Package.resolved`. Every target builds in the Swift 6 language mode with `ExistentialAny`,
 `InternalImportsByDefault` and `MemberImportVisibility` on, like tegola's packages.

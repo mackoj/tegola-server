@@ -42,7 +42,7 @@ run() {
   [[ -f "$CA_BUNDLE" ]] && cp "$CA_BUNDLE" "$SWIFTROOT/etc/ssl/certs/session-ca.crt"
   chroot "$SWIFTROOT" /usr/bin/env -i PATH=/usr/bin:/bin HOME=/root \
     HTTPS_PROXY="${HTTPS_PROXY:-}" HTTP_PROXY="${HTTP_PROXY:-}" https_proxy="${HTTPS_PROXY:-}" \
-    http_proxy="${HTTP_PROXY:-}" NO_PROXY="${NO_PROXY:-}" \
+    http_proxy="${HTTP_PROXY:-}" NO_PROXY="${NO_PROXY:-}" TEGOLA_TEST_DATABASE_URL="${TEGOLA_TEST_DATABASE_URL:-}" \
     SSL_CERT_FILE=/etc/ssl/certs/session-ca.crt GIT_SSL_CAINFO=/etc/ssl/certs/session-ca.crt \
     bash -c "cd /work/$(basename "$ROOT") && $*"
 }

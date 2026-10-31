@@ -12,7 +12,8 @@ struct LookupAPI: APIProtocol {
   let lookups: any LookupService
   let verifier: AppAttestVerifier
   let keys: any AttestKeyStore
-  let challenges: ChallengeStore
+  let challenges: any ChallengeStore
+  let storeHealth: @Sendable () async -> Bool
   let logger: Logger
 
   // MARK: - lookup
@@ -99,8 +100,7 @@ struct LookupAPI: APIProtocol {
       }
       return .ok(.init(body: .json(work)))
     } catch let unavailable as SourceUnavailable {
-      let (response, body) = ProblemEncoding.openAPIResponse(.unavailable, retryAfter: unavailable.retryAfter)
-      return .undocumented(statusCode: 503, .init(headerFields: response.headerFields, body: body))
+      throw ServiceUnavailable(retryAfter: unavailable.retryAfter)
     }
   }
 
@@ -109,10 +109,14 @@ struct LookupAPI: APIProtocol {
   func getAttestChallenge(_ input: Operations.GetAttestChallenge.Input) async throws
     -> Operations.GetAttestChallenge.Output
   {
-    guard let issued = await challenges.issue() else {
+    let issued: (challenge: String, expiresAt: Date)?
+    do { issued = try await challenges.issue() } catch {
+      logger.error("store unavailable", metadata: ["operation": "getAttestChallenge"])
+      throw ServiceUnavailable(retryAfter: 5)
+    }
+    guard let issued else {
       logger.warning("challenge store full")
-      let (response, body) = ProblemEncoding.openAPIResponse(.unavailable, retryAfter: 60)
-      return .undocumented(statusCode: 503, .init(headerFields: response.headerFields, body: body))
+      throw ServiceUnavailable(retryAfter: 60)
     }
     return .ok(.init(body: .json(.init(challenge: issued.challenge, expiresAt: issued.expiresAt))))
   }
@@ -127,7 +131,11 @@ struct LookupAPI: APIProtocol {
       return .badRequest(.init(body: .applicationProblemJson(ProblemKind.badRequest.schema(detail: error.field))))
     }
     // The challenge is spent whatever happens next, so a failed attempt can't be retried with it.
-    let challengeValid = await challenges.consume(request.challenge)
+    let challengeValid: Bool
+    do { challengeValid = try await challenges.consume(request.challenge) } catch {
+      logger.error("store unavailable", metadata: ["operation": "registerAttestKey"])
+      throw ServiceUnavailable(retryAfter: 5)
+    }
     guard
       let keyID = Data(base64Encoded: request.keyID),
       let attestation = Data(base64Encoded: request.attestation)
@@ -138,29 +146,37 @@ struct LookupAPI: APIProtocol {
       logger.notice("attestation rejected", metadata: ["reason": "challenge"])
       return Self.attestationRejected
     }
+    let key: AttestedKey
     do {
-      let key = try await verifier.verifyAttestation(
+      key = try await verifier.verifyAttestation(
         attestationObject: Array(attestation),
         keyID: Array(keyID),
         challenge: Array(request.challenge.utf8)
       )
-      if let existing = await keys.key(id: key.keyID), existing.revoked {
-        logger.notice("attestation rejected", metadata: ["reason": "revoked"])
-        return Self.attestationRejected
-      }
-      await keys.register(key)
-      logger.info("key registered", metadata: ["environment": "\(key.environment.rawValue)"])
-      return .created(.init())
     } catch {
       logger.notice("attestation rejected", metadata: ["reason": "\(error)"])
       return Self.attestationRejected
     }
+    do {
+      if let existing = try await keys.key(id: key.keyID), existing.revoked {
+        logger.notice("attestation rejected", metadata: ["reason": "revoked"])
+        return Self.attestationRejected
+      }
+      try await keys.register(key)
+    } catch {
+      logger.error("store unavailable", metadata: ["operation": "registerAttestKey"])
+      throw ServiceUnavailable(retryAfter: 5)
+    }
+    logger.info("key registered", metadata: ["environment": "\(key.environment.rawValue)"])
+    return .created(.init())
   }
 
   // MARK: - service
 
+  /// `degraded` when the key store doesn't answer: lookups would fail authentication with 503 until it does.
   func health(_ input: Operations.Health.Input) async throws -> Operations.Health.Output {
-    .ok(.init(body: .json(.init(status: .ok, types: lookups.supportedTypes.sorted()))))
+    let status: Operations.Health.Output.Ok.Body.JsonPayload.StatusPayload = await storeHealth() ? .ok : .degraded
+    return .ok(.init(body: .json(.init(status: status, types: lookups.supportedTypes.sorted()))))
   }
 
   // MARK: - helpers
@@ -201,6 +217,13 @@ struct LookupAPI: APIProtocol {
     }
     return (.ambiguous, ranked)
   }
+}
+
+/// A 503 for an operation whose contract declares none. Handlers throw it, and `EdgeMiddleware` answers with the
+/// problem document and `Retry-After`: the generated server drops the headers and body of an `undocumented` response
+/// (it writes only the status), so a handler can't return one (D-18).
+struct ServiceUnavailable: Error {
+  var retryAfter: Int
 }
 
 enum ServerInputError: Error, HTTPResponseConvertible {

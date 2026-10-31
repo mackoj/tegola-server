@@ -18,7 +18,7 @@ let debugToken = "test-debug-token-0123456789abcdef0123456789"
 /// A server on the fake CA and a fixed clock, with an in-memory key store the test can look into.
 struct TestServer {
   let ca: FakeAppAttestCA
-  let dependencies: ServerDependencies
+  var dependencies: ServerDependencies
   let keys: InMemoryAttestKeyStore
 
   init(
@@ -159,7 +159,10 @@ struct CannedLookups: LookupService {
     item.title == "Tetris" ? candidates : []
   }
 
-  func work(id: String) async throws -> Components.Schemas.Work? { nil }
+  func work(id: String) async throws -> Components.Schemas.Work? {
+    if unavailable { throw SourceUnavailable(retryAfter: 30) }
+    return nil
+  }
 }
 
 func candidate(_ id: String, confidence: Double) -> Components.Schemas.Candidate {

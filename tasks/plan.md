@@ -28,9 +28,19 @@ M1 foundation ──► M2 persistence ──► M3 first sources ──► M4 p
 
 ## M2 · persistence
 
-Broken down at the start of M2. Roughly: choose SQLite or Postgres (PLAN §9, question 3); a database `AttestKeyStore`
-with the atomic counter update and a concurrency test; challenges in the same store; migrations; optionally the App
-Attest receipt check.
+Postgres, the owner's choice (D-17). Done.
+
+| Task | Acceptance | Verify |
+|---|---|---|
+| T2.1 Store protocols | `AttestKeyStore` and `ChallengeStore` throw; the in-memory stores conform; a failing store is 503, never 401 or a pass; `/health` says `degraded` | `StoreFailureTests` |
+| T2.2 `PostgresStore` | Keys and challenges in Postgres, parameterised statements, the conditional counter `UPDATE`, versioned migrations under an advisory lock | `StoreTests` on both stores, with `TEGOLA_TEST_DATABASE_URL` |
+| T2.3 Configuration | `TEGOLA_DATABASE_URL` parsed (sslmode `verify-full` by default), required in production, never printed | `ConfigurationTests` |
+| T2.4 Wiring | The client runs as a service; migrations before the port opens, 60 s limit | the binary in `scripts/docker-smoke.sh` |
+| T2.5 Stack and CI | Postgres in Compose on an internal network; a Postgres service for CI's tests; smoke checks for migration, isolation, restart, no password in logs | `scripts/docker-smoke.sh`, CI |
+| T2.6 Fix found on the way | 503s for undeclared statuses keep their `Retry-After` and body (D-18) | `ContractTests`, `StoreFailureTests` |
+| T2.7 Docs | D-17, D-18; PLAN, DEPLOY, README, HANDOFF; `docs/milestones/M2.md` | Read-through |
+
+Left as options: the App Attest receipt check (D-5); shared rate limits for several instances (D-9).
 
 ## M3 · first sources
 

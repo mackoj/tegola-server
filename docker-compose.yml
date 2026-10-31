@@ -1,7 +1,8 @@
-# One instance of tegola-server behind Caddy (TLS), for production or a local rehearsal (docs/DEPLOY.md).
+# tegola-server behind Caddy (TLS), with Postgres for its keys (D-17), for production or a local rehearsal
+# (docs/DEPLOY.md).
 #   cp deploy/env.example .env   # then fill it in
 #   docker compose up -d --build
-# Milestone 1 keeps keys and rate limits in memory, so run exactly one tegola-server (D-8, D-9).
+# Rate limits are still in memory, per instance, so run exactly one tegola-server (D-9).
 name: tegola
 
 services:
@@ -14,9 +15,14 @@ services:
       TEGOLA_HOST: 0.0.0.0
       TEGOLA_PORT: "8080"
       TEGOLA_TRUSTED_PROXY_HOPS: "1"
+      # Postgres on the db network, which nothing else joins and which has no route out: no TLS needed there.
+      TEGOLA_DATABASE_URL: "postgres://tegola:${TEGOLA_DB_PASSWORD:?set TEGOLA_DB_PASSWORD in .env}@postgres:5432/tegola?sslmode=disable"
     # Reachable only by Caddy, on the private network: no published port.
     expose: ["8080"]
-    networks: [internal]
+    networks: [internal, db]
+    depends_on:
+      postgres:
+        condition: service_healthy
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -25,6 +31,32 @@ services:
     mem_limit: 512m
     restart: unless-stopped
     stop_grace_period: 15s
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: tegola
+      POSTGRES_DB: tegola
+      POSTGRES_PASSWORD: ${TEGOLA_DB_PASSWORD:?set TEGOLA_DB_PASSWORD in .env}
+      # scram-sha-256 for every connection, the network's included.
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # Only the server reaches it: no published port, an internal-only network.
+    networks: [db]
+    read_only: true
+    tmpfs: [/var/run/postgresql, /tmp]
+    shm_size: 128m
+    # The entrypoint needs these to hand the data directory to the postgres user, then drops to it.
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "tegola", "-d", "tegola"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
 
   caddy:
     image: caddy:2.10-alpine
@@ -52,8 +84,13 @@ networks:
   # Caddy ↔ server. Not internal-only: the server will call the lookup databases in M3.
   internal: {}
   public: {}
+  # Server ↔ Postgres only, with no route out of the host.
+  db:
+    internal: true
 
 volumes:
+  # The keys. Back it up (docs/DEPLOY.md).
+  postgres_data: {}
   # Certificates and ACME account: keep this volume, or Caddy asks for new certificates at every start.
   caddy_data: {}
   caddy_config: {}

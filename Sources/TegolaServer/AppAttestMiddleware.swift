@@ -70,7 +70,8 @@ struct AppAttestMiddleware: ServerMiddleware {
       return try await next(request, replayableBody, metadata)
     case .failure(let failure):
       logger.notice("auth failed", metadata: ["operation": "\(operationID)", "reason": "\(failure.reason)"])
-      return ProblemEncoding.openAPIResponse(failure.problem)
+      // A store that can't answer is the server's problem, not the caller's: 503, retry shortly.
+      return ProblemEncoding.openAPIResponse(failure.problem, retryAfter: failure.problem == .unavailable ? 5 : nil)
     }
   }
 
@@ -102,7 +103,9 @@ struct AppAttestMiddleware: ServerMiddleware {
     else { return fail("timestamp") }
     guard let path = request.path else { return fail("path") }
 
-    guard let record = await keys.key(id: keyID) else { return fail("unknownKey", .unknownKey) }
+    let found: AttestKeyRecord?
+    do { found = try await keys.key(id: keyID) } catch { return fail("storeUnavailable", .unavailable) }
+    guard let record = found else { return fail("unknownKey", .unknownKey) }
     guard !record.revoked else { return fail("revoked", .forbidden) }
     guard configuration.allowedAttestEnvironments.contains(record.key.environment) else {
       return fail("environment", .forbidden)
@@ -120,7 +123,11 @@ struct AppAttestMiddleware: ServerMiddleware {
     } catch {
       return fail("\(error)")
     }
-    guard await keys.advanceCounter(id: keyID, to: counter) else { return fail("replay") }
+    let advanced: Bool
+    do { advanced = try await keys.advanceCounter(id: keyID, to: counter) } catch {
+      return fail("storeUnavailable", .unavailable)
+    }
+    guard advanced else { return fail("replay") }
     return .success(keyID)
   }
 

@@ -27,6 +27,9 @@ let package = Package(
     .package(url: "https://github.com/apple/swift-log.git", "1.6.0"..<"2.0.0"),
     .package(url: "https://github.com/apple/swift-nio.git", "2.80.0"..<"3.0.0"),
     .package(url: "https://github.com/apple/swift-http-types.git", "1.3.0"..<"2.0.0"),
+    .package(url: "https://github.com/vapor/postgres-nio.git", "1.25.0"..<"2.0.0"),
+    .package(url: "https://github.com/apple/swift-nio-ssl.git", "2.27.0"..<"3.0.0"),
+    .package(url: "https://github.com/swift-server/swift-service-lifecycle.git", "2.6.0"..<"3.0.0"),
   ],
   targets: [
     // App Attest verification: a strict CBOR reader, attestation (certificate chain to Apple's root, nonce, app id,
@@ -55,6 +58,9 @@ let package = Package(
         .product(name: "Logging", package: "swift-log"),
         .product(name: "NIOCore", package: "swift-nio"),
         .product(name: "HTTPTypes", package: "swift-http-types"),
+        .product(name: "PostgresNIO", package: "postgres-nio"),
+        .product(name: "NIOSSL", package: "swift-nio-ssl"),
+        .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
       ],
       swiftSettings: swiftSettings,
       plugins: [.plugin(name: "OpenAPIGenerator", package: "swift-openapi-generator")]
@@ -103,6 +109,8 @@ let package = Package(
         .product(name: "X509", package: "swift-certificates"),
         .product(name: "SwiftASN1", package: "swift-asn1"),
         .product(name: "HTTPTypes", package: "swift-http-types"),
+        .product(name: "PostgresNIO", package: "postgres-nio"),
+        .product(name: "Logging", package: "swift-log"),
       ],
       swiftSettings: swiftSettings
     ),
