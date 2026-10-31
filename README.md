@@ -65,7 +65,9 @@ scripts/ci.sh` (tasks/HANDOFF.md).
 
 ## Configuration
 
-Everything comes from the environment. A missing or unsafe value stops the server before it binds a port (exit 78).
+Everything comes from the environment. A missing or unsafe value stops the server before it binds a port (exit 78);
+a failure after that, such as a database that can't be reached or migrated within 60 s, stops it with exit 1. Both
+log the reason first.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -89,7 +91,7 @@ docker compose up -d --build
 scripts/docker-smoke.sh          # builds the image and checks it, then the stack over HTTPS
 ```
 
-Run one instance: the key store and rate limits are in memory in milestone 1 (D-8, D-9).
+Run one instance: keys are in Postgres (D-17), but rate limits are still in memory, per instance (D-9).
 
 ## Layout
 

@@ -16,14 +16,18 @@ import OpenAPIRuntime
 /// 4. Otherwise: key id, timestamp within the tolerance, assertion over the request, counter strictly increasing.
 ///    Every failure is the same 401, except an unknown key (401 `…/unknown-key`, so the app registers again) and a
 ///    revoked key (403).
-/// 5. The per-key rate limit.
+/// 5. The per-key rate limit. Registration calls, being public, take the stricter per-client registration bucket
+///    instead, chosen here by operation id rather than by path (D-19).
 struct AppAttestMiddleware: ServerMiddleware {
   static let publicOperations: Set<String> = ["getAttestChallenge", "registerAttestKey", "health"]
+  /// An install calls these once; a client that calls them often is filling the challenge store.
+  static let registrationOperations: Set<String> = ["getAttestChallenge", "registerAttestKey"]
 
   let configuration: ServerConfiguration
   let verifier: AppAttestVerifier
   let keys: any AttestKeyStore
   let perKey: RateLimiter
+  let registrationPerClient: RateLimiter
   let logger: Logger
   let now: @Sendable () -> Date
 
@@ -47,6 +51,11 @@ struct AppAttestMiddleware: ServerMiddleware {
     let replayableBody: HTTPBody? = body == nil ? nil : HTTPBody(bytes)
 
     if Self.publicOperations.contains(operationID) {
+      if Self.registrationOperations.contains(operationID),
+        case .limited(let retryAfter) = await registrationPerClient.take(RequestScope.client ?? "unknown")
+      {
+        return ProblemEncoding.openAPIResponse(.tooManyRequests, retryAfter: retryAfter)
+      }
       return try await next(request, replayableBody, metadata)
     }
 
@@ -64,10 +73,11 @@ struct AppAttestMiddleware: ServerMiddleware {
 
     switch await authenticate(request, body: bytes) {
     case .success(let keyID):
-      if case .limited(let retryAfter) = await perKey.take(keyID.base64EncodedString()) {
+      let key = keyID.base64EncodedString()
+      if case .limited(let retryAfter) = await perKey.take(key) {
         return ProblemEncoding.openAPIResponse(.tooManyRequests, retryAfter: retryAfter)
       }
-      return try await next(request, replayableBody, metadata)
+      return try await RequestScope.$keyID.withValue(key) { try await next(request, replayableBody, metadata) }
     case .failure(let failure):
       logger.notice("auth failed", metadata: ["operation": "\(operationID)", "reason": "\(failure.reason)"])
       // A store that can't answer is the server's problem, not the caller's: 503, retry shortly.

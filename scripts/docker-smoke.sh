@@ -57,7 +57,16 @@ check "debug token 403 in production" "403" "$(code -H 'X-Tegola-Debug-Token: x'
 check "migrated the database before serving" "1" \
   "$(docker exec "$db" psql -U tegola -d tegola -tAc 'SELECT max(version) FROM tegola_schema_migrations')"
 check "the log never holds the database password" "0" "$(docker logs "$cid" 2>&1 | grep -c 'smoke@')"
-docker rm -f "$cid" "$db" > /dev/null
+docker rm -f "$cid" > /dev/null
+# A database that refuses the password stops the server with exit 1 after the 60 s startup limit, not a crash. The
+# reason is in the log (PostgresNIO logs each refused connection with its SQLSTATE), never the password (D-19).
+log=$(docker run --rm --network "$net" -e TEGOLA_APP_ID=$APP_ID \
+  -e "TEGOLA_DATABASE_URL=postgres://tegola:wrong-password@postgres:5432/tegola?sslmode=disable" "$IMAGE" 2>&1)
+check "a wrong database password stops it (exit 1)" "1" "$?"
+check "with the reason in the log, never the password" "yes yes 0" \
+  "$(grep -q 'stopped:' <<< "$log" && echo yes) $(grep -q 'password authentication failed' <<< "$log" && echo yes) \
+$(grep -c 'wrong-password' <<< "$log")"
+docker rm -f "$db" > /dev/null
 docker network rm "$net" > /dev/null
 
 # --- The stack: Caddy (TLS) in front --------------------------------------------------------------------------------

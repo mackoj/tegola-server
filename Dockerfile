@@ -30,7 +30,8 @@ COPY --from=build /tegola-server /usr/local/bin/tegola-server
 USER 10001:10001
 # In a container the server listens on all interfaces of its own network namespace; only the reverse proxy reaches
 # it. TEGOLA_APP_ID has no default: the server refuses to start without it. One proxy (Caddy) appends the client's
-# address to X-Forwarded-For.
-ENV TEGOLA_HOST=0.0.0.0 TEGOLA_PORT=8080 TEGOLA_ENVIRONMENT=production TEGOLA_TRUSTED_PROXY_HOPS=1
+# address to X-Forwarded-For; docker-compose.yml sets that. The image itself trusts no X-Forwarded-For, so run on its
+# own it can't be told a client's address by the client (D-19).
+ENV TEGOLA_HOST=0.0.0.0 TEGOLA_PORT=8080 TEGOLA_ENVIRONMENT=production TEGOLA_TRUSTED_PROXY_HOPS=0
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/tegola-server"]

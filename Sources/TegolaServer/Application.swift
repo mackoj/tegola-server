@@ -107,10 +107,11 @@ public func buildRouter(dependencies: ServerDependencies, logger: Logger) throws
   router.add(
     middleware: EdgeMiddleware(
       configuration: configuration,
-      perIP: RateLimiter(limit: configuration.limits.perIP, now: dependencies.now),
-      registrationPerIP: RateLimiter(limit: configuration.limits.registrationPerIP, now: dependencies.now)
+      perIP: RateLimiter(limit: configuration.limits.perIP, now: dependencies.now)
     )
   )
+  // Shared by the middleware (one token per call) and `matchBatch` (one more per extra row, D-19).
+  let perKey = RateLimiter(limit: configuration.limits.perKey, now: dependencies.now)
   let api = LookupAPI(
     configuration: configuration,
     lookups: dependencies.lookups,
@@ -118,13 +119,15 @@ public func buildRouter(dependencies: ServerDependencies, logger: Logger) throws
     keys: dependencies.keys,
     challenges: dependencies.challenges,
     storeHealth: dependencies.storeHealth,
+    perKey: perKey,
     logger: logger
   )
   let attest = AppAttestMiddleware(
     configuration: configuration,
     verifier: dependencies.verifier,
     keys: dependencies.keys,
-    perKey: RateLimiter(limit: configuration.limits.perKey, now: dependencies.now),
+    perKey: perKey,
+    registrationPerClient: RateLimiter(limit: configuration.limits.registrationPerIP, now: dependencies.now),
     logger: logger,
     now: dependencies.now
   )

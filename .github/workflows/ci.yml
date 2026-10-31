@@ -25,9 +25,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      # The contract's home, for the drift check (DECISIONS D-1). Public read; skipped if it can't be fetched.
+      # The contract's home, for the drift check (DECISIONS D-1). Required: without it the check would compare nothing.
       - uses: actions/checkout@v4
-        continue-on-error: true
         with:
           repository: mackoj/tegola
           path: tegola

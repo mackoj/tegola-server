@@ -278,8 +278,9 @@ paths:
       operationId: registerAttestKey
       summary: Register this install's App Attest key.
       description: |
-        Called once per install, and again if the server answers `401` with type `…/problems/unknown-key` (the key
-        was revoked or the server lost it). The server verifies the attestation object against Apple's App Attest
+        Called once per install, and again if the server answers `401` with type `…/problems/unknown-key` (the server
+        lost the key). A revoked key gets `403` on every call and can't be registered again: the app generates a new
+        key and registers that one. The server verifies the attestation object against Apple's App Attest
         root CA, checks the app id, the challenge and that the environment is `production` (or `development` on a
         development server), and stores only the key id, its public key and its counter.
       security: []
