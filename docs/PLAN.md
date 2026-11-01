@@ -81,6 +81,10 @@ games. Candidates to evaluate per v1 type (tegola D-23: music, video games, boar
 for `board-games`; nothing for `thing`. Only MusicBrainz has a barcode index: video-game and board-game barcodes
 answer "no match", and the app falls back to words, as tegola's `board-games.yml` already says.
 
+**Added** (owner, 2026-11-01; D-26): Wikidata, for `thing`, and as the **fallback** for the other three. A type's
+suppliers are asked in tiers: the fallback only when the primary sources found nothing (or failed). Wikidata also
+has a barcode index (GTIN, P3962), so a `thing` barcode can match.
+
 Each source: one type conforming to `LookupService` (or a composite per type), keys from the environment only, a
 timeout and a circuit breaker, its own outbound rate limit within the provider's terms, server-side caching of
 answers (a barcode's answer is the same for everyone), `SourceUnavailable` → 503 with `Retry-After`. Choosing them is
@@ -163,8 +167,8 @@ Deferred by the owner until release (2026-10-31): "I don't have response for thi
 need with docker; I will provide those informations when we are close to release." Each answer's place is in
 `docs/DEPLOY.md`, "Go-live checklist"; nothing else waits on them.
 
-1. ~~**Sources**~~ **Answered:** MusicBrainz, IGDB + ScreenScraper, BoardGameGeek, none for `thing` (owner,
-   2026-11-01; D-22). Still open: registering the keys, which binds whoever holds them to each provider's terms.
+1. ~~**Sources**~~ **Answered:** MusicBrainz, IGDB + ScreenScraper, BoardGameGeek (owner, 2026-11-01; D-22), and
+   Wikidata for `thing` and as every type's fallback (D-26). Still open: registering the keys, which binds whoever holds them to each provider's terms.
 2. **Hosting:** where it runs (a VPS with Caddy, Fly.io, a container platform), and the real domain.
 3. ~~**Persistence**~~ **Answered:** Postgres (owner, 2026-10-31; D-17). Still open: the stack's Postgres or a managed
    one, decided with the hosting.

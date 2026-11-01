@@ -57,6 +57,7 @@ let package = Package(
         "IGDBAPI",
         "ScreenScraperAPI",
         "BoardGameGeekAPI",
+        "WikidataAPI",
         .product(name: "Hummingbird", package: "hummingbird"),
         .product(name: "OpenAPIRuntime", package: "swift-openapi-runtime"),
         .product(name: "OpenAPIHummingbird", package: "swift-openapi-hummingbird"),
@@ -101,6 +102,12 @@ let package = Package(
     ),
     .target(
       name: "BoardGameGeekAPI",
+      dependencies: [.product(name: "OpenAPIRuntime", package: "swift-openapi-runtime")],
+      swiftSettings: swiftSettings,
+      plugins: [.plugin(name: "OpenAPIGenerator", package: "swift-openapi-generator")]
+    ),
+    .target(
+      name: "WikidataAPI",
       dependencies: [.product(name: "OpenAPIRuntime", package: "swift-openapi-runtime")],
       swiftSettings: swiftSettings,
       plugins: [.plugin(name: "OpenAPIGenerator", package: "swift-openapi-generator")]

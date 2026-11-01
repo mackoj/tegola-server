@@ -150,6 +150,9 @@ public struct SourceSettings: Sendable, Equatable, CustomStringConvertible {
   public var screenScraper: ScreenScraperSettings?
   /// BoardGameGeek's XML API bearer token.
   public var boardGameGeekToken: String?
+  /// Wikidata: a contact (a URL or an e-mail address) for the User-Agent Wikimedia's policy requires. No key. On, it
+  /// answers for `thing` and backs up the other types (D-26).
+  public var wikidataContact: String?
 
   public struct ClientCredentials: Sendable, Equatable, CustomStringConvertible {
     public var id: String
@@ -186,12 +189,14 @@ public struct SourceSettings: Sendable, Equatable, CustomStringConvertible {
     musicBrainzContact: String? = nil,
     igdb: ClientCredentials? = nil,
     screenScraper: ScreenScraperSettings? = nil,
-    boardGameGeekToken: String? = nil
+    boardGameGeekToken: String? = nil,
+    wikidataContact: String? = nil
   ) {
     self.musicBrainzContact = musicBrainzContact
     self.igdb = igdb
     self.screenScraper = screenScraper
     self.boardGameGeekToken = boardGameGeekToken
+    self.wikidataContact = wikidataContact
   }
 
   public var isEmpty: Bool { enabled.isEmpty }
@@ -203,6 +208,7 @@ public struct SourceSettings: Sendable, Equatable, CustomStringConvertible {
     if igdb != nil { names.append("igdb") }
     if screenScraper != nil { names.append("screenscraper") }
     if boardGameGeekToken != nil { names.append("boardgamegeek") }
+    if wikidataContact != nil { names.append("wikidata") }
     return names
   }
 
@@ -242,6 +248,7 @@ public struct SourceSettings: Sendable, Equatable, CustomStringConvertible {
       )
     }
     settings.boardGameGeekToken = try value("TEGOLA_BGG_TOKEN")
+    settings.wikidataContact = try value("TEGOLA_WIKIDATA_CONTACT")
     return settings
   }
 }

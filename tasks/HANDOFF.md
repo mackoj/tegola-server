@@ -6,8 +6,10 @@ it short and current.
 **Updated:** 2026-11-01. M1 to M3 are merged (PRs #1–#13), and so is **contract 0.2.0** (tegola D-71, PR #14):
 `identifyObject` (`POST /types/{type}/identify`, JSON hints or a multipart photo and hints) replaces `searchObjects`
 (D-24). The photo is size-checked, JPEG-checked and dropped: no source matches images yet. Music candidates now
-carry their Cover Art Archive front, when MusicBrainz says there is one (D-25). tegola's M5 and M6 are merged, so
-the app's lookup client exists: M4's end-to-end run waits only on a host and a device.
+carry their Cover Art Archive front, when MusicBrainz says there is one (D-25). **Wikidata** is a supplier now
+(D-26): primary for `thing`, and the fallback for the other types, asked only when their own sources find
+nothing. tegola's M5 and M6 are merged, so the app's lookup client exists: M4's end-to-end run waits only on a host
+and a device.
 
 ## Resume here (in this order)
 
@@ -18,12 +20,14 @@ the app's lookup client exists: M4's end-to-end run waits only on a host and a d
    - each answer's Content-Type (the generated clients refuse undeclared ones, D-23);
    - IGDB's `release_region`;
    - that MusicBrainz's release search returns `cover-art-archive` (D-25);
+   - Wikidata's answers (no key, only `TEGOLA_WIKIDATA_CONTACT`), and whether its classes and weights suit (D-26);
    - ScreenScraper's system ids;
    - BGG's bearer token.
 2. **Adding a supplier:** write (or fetch) its description in `api/sources/`, add a `<Name>API` target in
    `Package.swift` (copy an existing one), and conform a type to `DataSupplier` in `Sources/TegolaServer/Suppliers/`.
    Then wire it in `SupplierFactory.swift` and `SourceSettings`, and add tests with fixtures that carry the real
-   Content-Type.
+   Content-Type. A general source that should only answer when the type's own find nothing sets `tier: .fallback`
+   (D-26).
 3. **Dependabot PRs**, weekly: merge one only once both `linux` and `docker` are green (the `docker` job takes about
    ten minutes; #8 was merged before it failed). An image bump that touches the Dockerfile's `swift` or Compose's
    `postgres` fails `pins` until CI's copy in `.github/workflows/ci.yml` carries the same digest: move it in the same
@@ -45,12 +49,13 @@ update.
 
 ## Where things stand
 
-- **Spec:** `docs/PLAN.md`; decisions D-1 to D-25 in `docs/DECISIONS.md`.
+- **Spec:** `docs/PLAN.md`; decisions D-1 to D-26 in `docs/DECISIONS.md`.
 - **M1 (foundation):** the contract's seven operations served by Hummingbird 2 from generated code. App Attest
   registration and assertions are verified end to end, with every control of PLAN §5 and no lookup source yet (D-12).
   Report: `docs/milestones/M1.md`.
 - **M3 (suppliers):** MusicBrainz (music: barcode and words), IGDB + ScreenScraper (video games: words),
-  BoardGameGeek (board games: words), none for `thing`; the owner's choice (D-22). Each is described in
+  BoardGameGeek (board games: words); the owner's choice (D-22). Wikidata (barcode and words) for `thing`, and as the
+  other types' fallback tier (D-26). Each is described in
   `api/sources/*.openapi.yaml` with a generated client (`Sources/<Name>API/`), conforms to `DataSupplier`
   (`Sources/TegolaServer/Suppliers/`), and turns on with its environment variables. All clients send through
   `SupplierTransport`, which applies pace, breaker, timeout, size cap and no redirects (D-23). Tests:

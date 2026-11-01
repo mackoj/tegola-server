@@ -82,6 +82,7 @@ log the reason first.
 | `TEGOLA_IGDB_CLIENT_ID`, `TEGOLA_IGDB_CLIENT_SECRET` | unset | Turn IGDB on for video games: a Twitch application's credentials. Both or neither |
 | `TEGOLA_SCREENSCRAPER_DEV_ID`, `TEGOLA_SCREENSCRAPER_DEV_PASSWORD` | unset | Turn ScreenScraper on for video games. Both or neither; `TEGOLA_SCREENSCRAPER_USER` and `_PASSWORD` add a member's quota |
 | `TEGOLA_BGG_TOKEN` | unset | Turns board games on (BoardGameGeek XML API bearer token) |
+| `TEGOLA_WIKIDATA_CONTACT` | unset | Turns Wikidata on: `thing`, and the fallback for music, video games and board games (D-26). A contact URL or e-mail for its User-Agent |
 | `LOG_LEVEL` | `info` | swift-log level |
 
 ## Deploy
