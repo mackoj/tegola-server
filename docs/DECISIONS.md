@@ -309,3 +309,63 @@ store tests pass on 18.6.
 
 **Upgrading a deployment.** None runs yet. A stack that ran 17 has its data in `postgres_data/` at the old layout:
 dump it with 17 (`pg_dumpall`), start 18 on a fresh volume, restore. The server migrates its schema at start (D-17).
+
+### D-22 · The first sources, and how every source behaves
+
+**Choice.** The owner picked them on 2026-11-01 (PLAN §9, question 1): MusicBrainz for `music`; IGDB and ScreenScraper
+for `video-game`; BoardGameGeek for `board-games`; nothing for `thing`.
+
+**What each answers.**
+
+| Source | Type | Barcode | Words | Key | Pace | Ids |
+|---|---|---|---|---|---|---|
+| MusicBrainz | `music` | yes, exact hits only (0.95) | release, artist, catalogue number, year, format | none; a contact for the User-Agent | 1 / 1.1 s | `musicbrainz:release:<mbid>`, works `musicbrainz:release-group:<mbid>` |
+| IGDB | `video-game` | no index | title, platform, region, year | Twitch client id + secret | 1 / 260 ms | `igdb:game:<id>:<platform>:<region>`, works `igdb:game:<id>` |
+| ScreenScraper | `video-game` | no index | title, system, region, year | developer id + password (member optional) | 1 / 1.2 s | `screenscraper:game:<id>:<region>`, works `screenscraper:game:<id>` |
+| BoardGameGeek | `board-games` | no index | title, publisher, year | XML API bearer token | 1 / 2 s | `boardgamegeek:<id>` for both |
+
+A barcode for a type with no barcode index answers "no match", and the app falls back to words (tegola's
+`board-games.yml` already expects it). Candidates fill the type file's field keys (`medium`, `format`, `label`,
+`catalogNumber`, `country`; `platform`, `publisher`, `region`; `designer`, `players`, `playTime`, `minAge`, `weight`)
+and the subtype when the platform or medium has one. Every candidate names its source, with the attribution its terms
+ask for.
+
+**Ranking.** For words, every source ranks the same way: title similarity 70 %, subtitle 20 %, year 10 %, each
+counted only when the query gives it (`TextMatch.confidence`). Titles compare after folding case, accents,
+punctuation, `&` and a leading article, by character bigrams, so word order and small typos cost little. D-13's
+buckets then apply to imports unchanged. OCR text searches its first three lines, with the reason `ocr`.
+
+**How every source behaves.**
+- **One connection each** (`SourceConnection`): a pacer keeps the provider's rate across all requests, and refuses a
+  request that would wait more than 10 s (12 s for BGG) with `Retry-After` instead of queueing it. A breaker opens
+  for 30 s after five failures in a row. Requests time out at 8 s; answers are capped at 2 MB.
+- **Failures are 503 with `Retry-After`**, never an empty answer that would read as "no match". A provider's 429 or
+  503 (and ScreenScraper's 423, 430, 431) keep its `Retry-After`, an hour for ScreenScraper's daily quota. A refused
+  key is logged as `unauthorized`, an operator problem.
+- **Several sources for one type** are asked in parallel. When some answer, their answers are enough. When all fail,
+  the lookup is 503 with the soonest retry.
+- **Answers are cached** in memory for a day (an empty answer for an hour), per source and normalised query, at most
+  10,000 of them. Failures are never cached. A 50-row import against a 1-request-a-second source runs out of pace
+  part-way and answers 503; the rows it reached are cached, so each retry goes further.
+
+**Security.**
+- Keys come from the environment only (`SourceSettings`). A pair set by half, or a value with spaces or control
+  characters, stops the server. The start-up log names the sources that are on, never a value.
+- Words never change a provider's query. MusicBrainz's Lucene syntax is escaped, with `AND`/`OR`/`NOT` lowered.
+  IGDB's quoted string loses `"`, `\` and `;`. Ids are checked before they reach a URL: UUIDs for MusicBrainz,
+  integers for the others.
+- The Twitch secret goes in a POST body, never a URL. ScreenScraper takes its credentials in the query string by
+  design: its URLs are never logged, and its media URLs, which carry them too, are never passed on, so its candidates
+  have no images.
+- Images are kept only when they're HTTPS on the source's own image host (`images.igdb.com`,
+  `cf.geekdo-images.com`), without credentials or a query.
+- Provider strings lose control characters and are cut at 300 characters. BGG's XML is parsed without resolving
+  external entities.
+- A source failure logs the source and a reason code (`network`, `http-5xx`, `busy`, `undecodable`, …), never the
+  URL, the words or a key.
+
+**The tests' answers are hand-written** from each provider's documented format: this environment can't reach the
+providers. They should be re-recorded from the live APIs once the keys exist.
+
+**Left for later.** Cover art for music (the Cover Art Archive, one more request per release, at MusicBrainz's pace).
+A cache shared by several instances, with the shared rate limits (D-9).

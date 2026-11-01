@@ -44,8 +44,20 @@ Left as options: the App Attest receipt check (D-5); shared rate limits for seve
 
 ## M3 · first sources
 
-Broken down once the owner picks the sources (PLAN §9, question 1). One source per launch type, recorded-response
-tests, caching, timeouts, a circuit breaker, attribution in `Candidate.sources`.
+The owner's choice (2026-11-01, D-22): MusicBrainz, IGDB + ScreenScraper, BoardGameGeek, nothing for `thing`.
+
+| Task | What | Proof |
+|---|---|---|
+| T3.1 Infrastructure | `HTTPTransport` (AsyncHTTPClient; replayable), per-source pace, circuit breaker, timeouts, body cap, answer cache, the per-type composite behind `LookupService` | `SourceConnectionTests`, `SourcesLookupServiceTests` |
+| T3.2 MusicBrainz | Barcode and words for `music`; Lucene escaping; release-group works | `MusicBrainzTests` |
+| T3.3 IGDB | Words for `video-game`, Twitch token, one candidate per platform and region | `IGDBTests` |
+| T3.4 ScreenScraper | Words for `video-game`, regional titles, no media URLs | `ScreenScraperTests` |
+| T3.5 BoardGameGeek | Words for `board-games`, XML without external entities | `BoardGameGeekTests` |
+| T3.6 Configuration | One opt-in per source, pairs or nothing, values never logged | `SourceSettingsTests` |
+| T3.7 Docs | D-22; PLAN §4, §9; README, DEPLOY, env.example; `docs/milestones/M3.md` | Read-through |
+
+Left for later: re-recording the fixtures against the live APIs once keys exist; cover art for music (one more
+MusicBrainz call per release); a cache shared by several instances.
 
 ## M4 · production
 

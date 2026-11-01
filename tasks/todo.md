@@ -33,7 +33,17 @@ Plan: `tasks/plan.md`, M2. Report: `docs/milestones/M2.md`.
 
 ## M3 · first sources
 
-Waits on the owner's choice of sources (PLAN §9, question 1).
+Plan: `tasks/plan.md`, M3. Report: `docs/milestones/M3.md`. Sources chosen by the owner on 2026-11-01 (D-22).
+
+- [x] T3.1 Infrastructure: transport, pace, breaker, timeouts, cache, composite
+- [x] T3.2 MusicBrainz (music: barcode and words)
+- [x] T3.3 IGDB (video games: words)
+- [x] T3.4 ScreenScraper (video games: words)
+- [x] T3.5 BoardGameGeek (board games: words)
+- [x] T3.6 Configuration
+- [x] T3.7 Docs and report
+- [ ] Separate review agent over M3
+- [ ] Owner: register the keys (D-22); then re-record the fixtures from the live APIs
 
 ## Open follow-ups
 
