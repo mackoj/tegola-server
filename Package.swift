@@ -21,7 +21,7 @@ let package = Package(
     .package(url: "https://github.com/swift-server/swift-openapi-hummingbird.git", "2.0.1"..<"3.0.0"),
     .package(url: "https://github.com/apple/swift-openapi-generator", "1.10.0"..<"2.0.0"),
     .package(url: "https://github.com/apple/swift-openapi-runtime", "1.8.0"..<"2.0.0"),
-    .package(url: "https://github.com/apple/swift-crypto.git", "3.10.0"..<"5.0.0"),
+    .package(url: "https://github.com/apple/swift-crypto.git", "3.10.0"..<"6.0.0"),
     .package(url: "https://github.com/apple/swift-certificates.git", "1.6.0"..<"2.0.0"),
     .package(url: "https://github.com/apple/swift-asn1.git", "1.3.0"..<"2.0.0"),
     .package(url: "https://github.com/apple/swift-log.git", "1.6.0"..<"2.0.0"),

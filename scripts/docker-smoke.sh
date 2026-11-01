@@ -111,6 +111,15 @@ if [[ "${1:-}" != "image" ]]; then
     done
     check "stack: healthy again after a server restart" "200" \
       "$(https -o /dev/null -w '%{http_code}' https://localhost/v1/health)"
+    # The data lives in the named volume: after `down` and `up` (new containers, new anonymous volumes) it's still
+    # there (D-21).
+    compose exec -T postgres sh -c 'PGPASSWORD=$POSTGRES_PASSWORD psql -h 127.0.0.1 -U tegola -d tegola -qc \
+      "CREATE TABLE smoke_persistence (x int)"' > /dev/null 2>&1
+    compose down > /dev/null 2>&1
+    compose up -d --wait > /dev/null 2>&1
+    check "stack: data survives down and up" "1" \
+      "$(compose exec -T postgres sh -c 'PGPASSWORD=$POSTGRES_PASSWORD psql -h 127.0.0.1 -U tegola -d tegola -tAc \
+        "SELECT count(*) FROM pg_tables WHERE tablename = \$\$smoke_persistence\$\$"' 2>/dev/null)"
   else
     echo "- ❌ stack: compose up failed, see build/docker-compose.log" >> "$SUMMARY"; STATUS=1
   fi

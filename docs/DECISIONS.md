@@ -290,3 +290,22 @@ matched.
 digests across files. Dependabot doesn't update a workflow's `container:` and `services:` images, so a bump of the
 Dockerfile's `swift` or Compose's `postgres` fails that check until CI's copy is moved too, in the same PR. That keeps
 CI testing on the image that ships.
+
+### D-21 · Postgres 18, and its new data path
+
+**Gap.** Dependabot's PR #8 moved Compose from `postgres:17-alpine` to `18-alpine`, and it was merged before the
+`docker` job finished. From 18 the image keeps its data in `/var/lib/postgresql/18/docker` (`PGDATA`) and refuses to
+start while a volume is mounted on the old `/var/lib/postgresql/data`, which is where Compose mounted `postgres_data`.
+The stack never became healthy, and `main`'s `docker` job was red from that merge on. CI's own Postgres service and
+`scripts/test.sh` stayed on 17, so the gate tested one major version and the stack shipped another.
+
+**Decision.** Postgres 18 everywhere: Compose, CI's service and the smoke test, all on one digest (D-20's check now
+refuses the split). `postgres_data` is mounted on `/var/lib/postgresql`, the parent of every major's directory, as the
+image expects. `docker-smoke.sh` now writes a table, takes the stack `down` and `up` again (new containers, new
+anonymous volumes), and checks the table is still there. Data that lands outside the named volume fails the smoke
+test instead of disappearing on the next update. A plain `--force-recreate` wouldn't show it: Compose carries a
+container's anonymous volumes over to its replacement. The
+store tests pass on 18.6.
+
+**Upgrading a deployment.** None runs yet. A stack that ran 17 has its data in `postgres_data/` at the old layout:
+dump it with 17 (`pg_dumpall`), start 18 on a fresh volume, restore. The server migrates its schema at start (D-17).

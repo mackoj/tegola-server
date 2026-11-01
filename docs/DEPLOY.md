@@ -17,7 +17,7 @@ Internet ──443/80──► caddy (TLS, HTTP→HTTPS, /v1/* only) ──priva
 |---|---|---|
 | `tegola-server` image | `Dockerfile` | Static release binary on `ubuntu:noble`, uid 10001. In compose: read-only root, no capabilities, `no-new-privileges`, 512 MB, 256 processes |
 | Caddy | `deploy/Caddyfile` | Let's Encrypt certificate for `TEGOLA_DOMAIN`, TLS 1.2/1.3, 256 KB body cap, health checks on `/v1/health`, no admin API, no access log |
-| Postgres 17 | `docker-compose.yml` | Keys and challenges (D-17). Internal-only network, no published port, read-only root, minimal capabilities, `scram-sha-256`, data in the `postgres_data` volume |
+| Postgres 18 | `docker-compose.yml` | Keys and challenges (D-17). Internal-only network, no published port, read-only root, minimal capabilities, `scram-sha-256`, data in the `postgres_data` volume |
 | Stack | `docker-compose.yml` | One server, one Caddy, one Postgres. Caddy gets only `TEGOLA_DOMAIN`; the server's secrets stay with the server |
 | Settings | `deploy/env.example` → `.env` | `.env` is git-ignored. The server refuses to start on a missing or unsafe value (exit 78) |
 
@@ -66,6 +66,7 @@ curl https://<domain>/v1/health
 - **Update:** `git pull && docker compose up -d --build`. The server stops gracefully (15 s), migrates the schema
   before serving again, and keeps every key (D-17).
 - **Logs:** `docker compose logs tegola-server`. One `request` line per call (method, route template, status, ms), plus `auth failed` / `attestation rejected` with a reason code. Never content, IPs or key ids (D-15). Watch the rate of `auth failed` and of `status=429`.
+- **Postgres major upgrades** (17 to 18, D-21): dump with the old version, restore into a fresh volume. A plain image bump can't read the old major's data.
 - **Base-image updates:** every image is pinned by digest (D-20). Dependabot opens a weekly PR when a tag moves; once CI is green, merge it, then update as above.
 - **Rollback:** check out the previous commit and `docker compose up -d --build`.
 - **Behind a proxy that intercepts TLS** (some CI or sandboxes): `DOCKER_PROXY_CA=/path/ca.pem scripts/docker-smoke.sh`, or `docker build --secret id=proxy_ca,src=/path/ca.pem …`. The CA is used only to fetch packages and never reaches the image.

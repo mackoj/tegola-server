@@ -33,15 +33,17 @@ services:
     stop_grace_period: 15s
 
   postgres:
-    image: postgres:17-alpine@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
+    image: postgres:18-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5
     environment:
       POSTGRES_USER: tegola
       POSTGRES_DB: tegola
       POSTGRES_PASSWORD: ${TEGOLA_DB_PASSWORD:?set TEGOLA_DB_PASSWORD in .env}
       # scram-sha-256 for every connection, the network's included.
       POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+    # From Postgres 18 the image keeps its data under /var/lib/postgresql/<major>/docker and refuses a volume on the
+    # old /var/lib/postgresql/data path (D-21).
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
     # Only the server reaches it: no published port, an internal-only network.
     networks: [db]
     read_only: true

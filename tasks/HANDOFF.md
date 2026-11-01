@@ -4,13 +4,17 @@ The state of the work for whoever picks it up next: a new session, another agent
 it short and current.
 
 **Updated:** 2026-11-01. M1, M2 and the review's fixes (D-19) are merged (PRs #1–#5). Images and actions are now
-pinned (D-20), on `claude/tegola-hummingbird-bff-9ad714`, open as PR #11.
+pinned (D-20), and Postgres 18 works (D-21), on `claude/tegola-hummingbird-bff-9ad714`, open as PR #11.
+`main` has been red (`docker` job) since Dependabot's Postgres 18 bump (#8) merged; PR #11 fixes it.
 
 ## Resume here (in this order)
 
-1. **tegola-server PR #11** (this branch): pinning (D-20). If its `linux` and `docker` jobs are green, merge it.
-2. **Dependabot PRs**, weekly: an image bump that touches the Dockerfile's `swift` or Compose's `postgres` fails
-   `pins` until CI's copy in `.github/workflows/ci.yml` carries the same digest. Move it in the same PR.
+1. **tegola-server PR #11** (this branch): pinning (D-20) and Postgres 18 (D-21). If its `linux` and `docker` jobs
+   are green, merge it.
+2. **Dependabot PRs**, weekly: merge one only once both `linux` and `docker` are green (the `docker` job takes about
+   ten minutes; #8 was merged before it failed). An image bump that touches the Dockerfile's `swift` or Compose's
+   `postgres` fails `pins` until CI's copy in `.github/workflows/ci.yml` carries the same digest: move it in the same
+   PR. A Postgres major bump needs the upgrade step in D-21 once a deployment exists.
 3. **Owner answers**, deferred until release: sources per type, hosting and domain, Team ID, shared caches (PLAN §9;
    persistence is answered: Postgres, D-17). `docs/DEPLOY.md` says where each answer goes.
 4. **M3, sources** (once the owner picks them): one per launch type behind `LookupService`, with recorded-response
@@ -24,7 +28,7 @@ update.
 
 ## Where things stand
 
-- **Spec:** `docs/PLAN.md`; decisions D-1 to D-20 in `docs/DECISIONS.md`.
+- **Spec:** `docs/PLAN.md`; decisions D-1 to D-21 in `docs/DECISIONS.md`.
 - **M1 (foundation):** the contract's seven operations served by Hummingbird 2 from generated code. App Attest
   registration and assertions are verified end to end, with every control of PLAN §5 and no lookup source yet (D-12).
   Report: `docs/milestones/M1.md`.
@@ -41,7 +45,9 @@ update.
 - **Verified on this branch** (Linux, Swift 6.4.2):
   - `scripts/ci.sh`: tests, format, contract drift, secrets and pins green (contract lint skipped: no Node here; CI
     runs it).
-  - `scripts/docker-smoke.sh`: all 25 checks, image and stack, built from the pinned digests.
+  - `scripts/docker-smoke.sh`: image and stack, built from the pinned digests, now with a persistence check
+    (D-21).
+  - The store tests on Postgres 18.6.
 - **Not verified:** a real device's attestation (tegola M6); a real domain and certificate; a managed Postgres with
   `verify-full`.
 - **tegola** knows about this repo: its `CLAUDE.md` ("Companion repo"), D-41, D-42, D-55 and its HANDOFF.
@@ -64,7 +70,7 @@ TEGOLA_ENVIRONMENT=development TEGOLA_APP_ID=ABCDE12345.fr.macko.tegola \
 - **Branch:** one milestone branch from `main`, one commit per task, one PR per milestone into `main`.
 - **Postgres for the tests in a cloud session:** with Docker started, `docker run -d --name tegola-test-pg -p
   127.0.0.1:55432:5432 -e POSTGRES_USER=tegola -e POSTGRES_PASSWORD=tegola-test -e POSTGRES_DB=tegola_test
-  postgres:17-alpine` (pulled from `mirror.gcr.io/library/postgres:17-alpine` and tagged), then
+  postgres:18-alpine` (pulled from `mirror.gcr.io/library/postgres:18-alpine` and tagged), then
   `TEGOLA_TEST_DATABASE_URL='postgres://tegola:tegola-test@127.0.0.1:55432/tegola_test?sslmode=disable'
   scripts/cloud-toolchain.sh run scripts/ci.sh` (the script passes the variable into the chroot).
 - **Docker in a cloud session:** `dockerd` is installed but not started (start it in the background). Docker Hub
