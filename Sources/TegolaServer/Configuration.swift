@@ -32,6 +32,10 @@ public struct ServerConfiguration: Sendable {
   public struct Limits: Sendable {
     /// Request bodies above this answer 413 before they're decoded.
     public var maximumBodyBytes = 256 * 1024
+    /// `identifyObject`'s body, which may carry a photo: the contract's 3 MiB (D-24).
+    public var maximumIdentifyBodyBytes = 3 * 1024 * 1024
+    /// The photo in an `identifyObject` body: the contract's 2 MiB (D-24).
+    public var maximumImageBytes = 2 * 1024 * 1024
     /// How far `X-Tegola-Timestamp` may be from the server's clock.
     public var timestampTolerance: TimeInterval = 5 * 60
     /// How long a challenge lives.
@@ -45,6 +49,14 @@ public struct ServerConfiguration: Sendable {
     public var idleTimeout: TimeAmount = .seconds(30)
 
     public init() {}
+
+    /// The body cap of one operation: `identifyObject` has its own.
+    func maximumBodyBytes(for operationID: String) -> Int {
+      operationID == "identifyObject" ? maximumIdentifyBodyBytes : maximumBodyBytes
+    }
+
+    /// The largest cap of any operation: what the edge checks a declared length against before the route is known.
+    var largestBodyBytes: Int { max(maximumBodyBytes, maximumIdentifyBodyBytes) }
   }
 
   public init(

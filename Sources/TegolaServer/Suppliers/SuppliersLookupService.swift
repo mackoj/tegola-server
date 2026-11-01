@@ -19,7 +19,7 @@ protocol DataSupplier: Sendable {
   func work(id: String) async throws(SupplierFailure) -> Components.Schemas.Work?
 }
 
-/// A words query, from `searchObjects` or one import row.
+/// A words query, from `identifyObject`'s hints or one import row.
 struct SupplierQuery: Sendable, Hashable {
   var title: String
   var subtitle: String?
@@ -81,24 +81,86 @@ package struct SuppliersLookupService: LookupService {
     }
   }
 
-  package func search(typeID: String, _ request: Components.Schemas.SearchRequest) async throws
+  /// The words go to every supplier of the type, a barcode to those with a barcode index, both at once. A release
+  /// both find is one candidate, with the higher confidence and both reasons. One half failing doesn't hide what the
+  /// other found; both failing, or one failing while the other found nothing, is `SourceUnavailable` (D-24).
+  package func identify(typeID: String, _ hints: Components.Schemas.IdentifyHints) async throws
     -> [Components.Schemas.Candidate]
   {
-    let words = TextMatch.queryTitle(title: request.title, text: request.text)
-    guard words != nil || request.catalogueNumber != nil else { return [] }
-    let query = SupplierQuery(
-      title: words ?? "",
-      subtitle: request.subtitle,
-      catalogueNumber: request.catalogueNumber,
-      year: request.year,
-      subtype: request.subtype,
-      region: request.region,
-      limit: request.limit ?? 5,
-      reason: request.title == nil && request.text != nil ? .ocr : .title
-    )
-    return try await ask(sources[typeID] ?? [], operation: "search", key: query.cacheKey) {
-      source throws(SupplierFailure) in try await source.search(query)
+    let words = TextMatch.queryTitle(title: hints.title, text: hints.text)
+    let query: SupplierQuery? =
+      words == nil && hints.catalogueNumber == nil
+      ? nil
+      : SupplierQuery(
+        title: words ?? "",
+        subtitle: hints.subtitle,
+        catalogueNumber: hints.catalogueNumber,
+        year: hints.year,
+        subtype: hints.subtype,
+        region: hints.region,
+        limit: hints.limit ?? 5,
+        reason: hints.title == nil && hints.text != nil ? .ocr : .title
+      )
+    let barcode = hints.barcode.map { hint in
+      BarcodeQuery(
+        typeID: typeID,
+        code: hint.code,
+        symbology: hint.symbology,
+        subtype: hints.subtype,
+        region: hints.region
+      )
     }
+    async let byWords: Result<[Components.Schemas.Candidate], SourceUnavailable> = Self.capture {
+      guard let query else { return [] }
+      return try await ask(sources[typeID] ?? [], operation: "search", key: query.cacheKey) {
+        source throws(SupplierFailure) in try await source.search(query)
+      }
+    }
+    async let byBarcode: Result<[Components.Schemas.Candidate], SourceUnavailable> = Self.capture {
+      guard let barcode else { return [] }
+      return try await self.barcode(barcode)
+    }
+    let outcomes = await [byBarcode, byWords]
+    var merged: [Components.Schemas.Candidate] = []
+    var failures: [SourceUnavailable] = []
+    for outcome in outcomes {
+      switch outcome {
+      case .success(let candidates): merged = Self.merge(merged, candidates)
+      case .failure(let failure): failures.append(failure)
+      }
+    }
+    if merged.isEmpty, let soonest = failures.map(\.retryAfter).min() {
+      throw SourceUnavailable(retryAfter: soonest)
+    }
+    return merged
+  }
+
+  private static func capture(
+    _ body: () async throws -> [Components.Schemas.Candidate]
+  ) async -> Result<[Components.Schemas.Candidate], SourceUnavailable> {
+    do { return .success(try await body()) } catch let unavailable as SourceUnavailable {
+      return .failure(unavailable)
+    } catch {
+      return .failure(SourceUnavailable(retryAfter: 5))
+    }
+  }
+
+  /// Adds `more` to `base`; a release already there keeps one entry, with the higher confidence and every reason.
+  static func merge(_ base: [Components.Schemas.Candidate], _ more: [Components.Schemas.Candidate])
+    -> [Components.Schemas.Candidate]
+  {
+    var merged = base
+    for candidate in more {
+      guard let index = merged.firstIndex(where: { $0.releaseID == candidate.releaseID }) else {
+        merged.append(candidate)
+        continue
+      }
+      merged[index].confidence = max(merged[index].confidence, candidate.confidence)
+      for reason in candidate.reasons where !merged[index].reasons.contains(where: { $0.kind == reason.kind }) {
+        merged[index].reasons.append(reason)
+      }
+    }
+    return merged
   }
 
   package func match(typeID: String, _ item: Components.Schemas.MatchItem) async throws

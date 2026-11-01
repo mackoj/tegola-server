@@ -35,7 +35,7 @@ struct SecurityTests {
         }
       }
       try await client.execute(
-        uri: "/v1/types/music/search",
+        uri: "/v1/types/music/identify",
         method: .post,
         headers: json(ip("1.1.1.1")),
         body: ByteBuffer(string: #"{"title":"Ridge Racer"}"#)
@@ -63,7 +63,7 @@ struct SecurityTests {
       var headers = json(ip("1.1.1.1"))
       headers[.tegolaDebugToken] = debugToken
       try await client.execute(
-        uri: "/v1/types/music/search",
+        uri: "/v1/types/music/identify",
         method: .post,
         headers: headers,
         body: ByteBuffer(string: #"{"title":"Ridge Racer"}"#)
@@ -127,20 +127,20 @@ struct SecurityTests {
       // Signed for another body.
       let signedBody = Array(#"{"title":"Ridge Racer"}"#.utf8)
       try await client.execute(
-        uri: "/v1/types/music/search",
+        uri: "/v1/types/music/identify",
         method: .post,
         headers: json(
-          try server.signed(device, counter: 2, method: .post, path: "/v1/types/music/search", body: signedBody)
+          try server.signed(device, counter: 2, method: .post, path: "/v1/types/music/identify", body: signedBody)
         ),
         body: ByteBuffer(string: #"{"title":"Something else"}"#)
       ) { response in
         #expect(response.status == .unauthorized)
       }
       try await client.execute(
-        uri: "/v1/types/music/search",
+        uri: "/v1/types/music/identify",
         method: .post,
         headers: json(
-          try server.signed(device, counter: 3, method: .post, path: "/v1/types/music/search", body: signedBody)
+          try server.signed(device, counter: 3, method: .post, path: "/v1/types/music/identify", body: signedBody)
         ),
         body: ByteBuffer(bytes: signedBody)
       ) { response in
@@ -280,7 +280,7 @@ struct SecurityTests {
       var headers = json(ip("1.1.1.1"))
       headers[.tegolaDebugToken] = debugToken
       try await client.execute(
-        uri: "/v1/types/music/search",
+        uri: "/v1/types/music/match",
         method: .post,
         headers: headers,
         body: ByteBuffer(string: #"{"text":""# + String(repeating: "a", count: 2000) + #""}"#)

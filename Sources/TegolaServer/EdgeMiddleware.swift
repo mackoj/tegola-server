@@ -8,7 +8,8 @@ import OpenAPIRuntime
 /// The outermost middleware, in front of every route (DECISIONS D-7, D-9, D-10):
 ///
 /// 1. In production, refuses any request that carries `X-Tegola-Debug-Token` (403), before anything else runs.
-/// 2. Refuses a declared `Content-Length` above the body cap (413) without reading the body.
+/// 2. Refuses a declared `Content-Length` above the largest body cap (413) without reading the body. The route isn't
+///    known yet; `AppAttestMiddleware` applies each operation's own cap (D-24).
 /// 3. Applies the per-client rate limit (429 with `Retry-After`), the client being its IPv4 address or IPv6 /64
 ///    (`RateLimitKey`, D-19). Registration's stricter bucket is applied by operation in `AppAttestMiddleware`, so no
 ///    spelling of the path (`/v1//app-attest/…`) can avoid it.
@@ -48,7 +49,7 @@ struct EdgeMiddleware<Context: RemoteAddressRequestContext>: RouterMiddleware {
       return ProblemEncoding.response(.debugTokenRefused)
     }
     if let declared = request.headers[.contentLength].flatMap(Int.init),
-      declared > configuration.limits.maximumBodyBytes
+      declared > configuration.limits.largestBodyBytes
     {
       return ProblemEncoding.response(.payloadTooLarge)
     }

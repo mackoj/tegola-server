@@ -151,7 +151,7 @@ struct CannedLookups: LookupService {
     return candidates
   }
 
-  func search(typeID: String, _ request: Components.Schemas.SearchRequest) async throws
+  func identify(typeID: String, _ hints: Components.Schemas.IdentifyHints) async throws
     -> [Components.Schemas.Candidate]
   { candidates }
 

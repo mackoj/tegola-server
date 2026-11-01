@@ -387,10 +387,10 @@ final class ScriptedSupplier: DataSupplier, @unchecked Sendable {
     #expect(a.calls == 1)  // cached
   }
 
-  @Test func searchWithOCRTextSaysSo() async throws {
+  @Test func identifyWithOCRTextSaysSo() async throws {
     let source = RecordingSupplier()
     let service = SuppliersLookupService(sources: [source])
-    _ = try await service.search(typeID: "music", .init(text: "\n  OK COMPUTER \nRADIOHEAD\nparlophone\nextra"))
+    _ = try await service.identify(typeID: "music", .init(text: "\n  OK COMPUTER \nRADIOHEAD\nparlophone\nextra"))
     let asked = try #require(source.queries.first)
     #expect(asked.title == "OK COMPUTER RADIOHEAD parlophone")
     #expect(asked.reason == .ocr)

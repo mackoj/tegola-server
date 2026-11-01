@@ -12,9 +12,10 @@
 	tls {
 		protocols tls1.2 tls1.3
 	}
-	# The server caps bodies at 256 KiB too; refusing here keeps big uploads off the private network.
+	# The server caps bodies too (256 KiB, 3 MiB for identify's photo, D-24); refusing here keeps bigger uploads off
+	# the private network.
 	request_body {
-		max_size 256KB
+		max_size 3MiB
 	}
 	# Only the contract's base path reaches the server.
 	handle /v1/* {

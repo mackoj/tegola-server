@@ -44,20 +44,68 @@ struct LookupAPI: APIProtocol {
     }
   }
 
-  func searchObjects(_ input: Operations.SearchObjects.Input) async throws -> Operations.SearchObjects.Output {
-    guard case .json(let request) = input.body else { throw ServerInputError.unsupportedBody }
-    do {
-      try Validation.typeID(input.path.typeID)
-      try Validation.search(request)
-    } catch {
-      return .badRequest(.init(body: .applicationProblemJson(ProblemKind.badRequest.schema(detail: error.field))))
+  /// Words, a barcode and a photo, in any combination (D-24). The photo is read up to its cap, checked to be a JPEG,
+  /// and dropped: no source matches images yet, so it goes nowhere, and it's never logged, cached or stored.
+  func identifyObject(_ input: Operations.IdentifyObject.Input) async throws -> Operations.IdentifyObject.Output {
+    let hints: Components.Schemas.IdentifyHints
+    switch input.body {
+    case .json(let body):
+      do {
+        try Validation.typeID(input.path.typeID)
+        try Validation.identify(body, requireQuery: true)
+      } catch {
+        return .badRequest(.init(body: .applicationProblemJson(ProblemKind.badRequest.schema(detail: error.field))))
+      }
+      hints = body
+    case .multipartForm(let parts):
+      var photo: [UInt8]?
+      var found: Components.Schemas.IdentifyHints?
+      do {
+        for try await part in parts {
+          switch part {
+          case .image(let image):
+            guard photo == nil else { return Self.badIdentify("image") }
+            do {
+              photo = try await [UInt8](collecting: image.payload.body, upTo: configuration.limits.maximumImageBytes)
+            } catch {
+              return .contentTooLarge(
+                .init(body: .applicationProblemJson(ProblemKind.payloadTooLarge.schema(detail: "image")))
+              )
+            }
+          case .hints(let part):
+            guard found == nil else { return Self.badIdentify("hints") }
+            found = part.payload.body
+          }
+        }
+      } catch {
+        // A part with another type than the contract's, a repeated or a malformed part: the runtime refuses it.
+        return Self.badIdentify(nil)
+      }
+      if let photo, !Validation.isJPEG(photo) {
+        return .unsupportedMediaType(
+          .init(body: .applicationProblemJson(ProblemKind.unsupportedMediaType.schema(detail: "image")))
+        )
+      }
+      do {
+        try Validation.typeID(input.path.typeID)
+        try Validation.identify(found ?? .init(), requireQuery: photo == nil)
+      } catch {
+        return .badRequest(.init(body: .applicationProblemJson(ProblemKind.badRequest.schema(detail: error.field))))
+      }
+      hints = found ?? .init()
     }
+    // A photo alone, or beside hints that hold nothing to look up: no source reads images yet, so no match.
+    guard Validation.hasQuery(hints) else { return .ok(.init(body: .json(.init(candidates: [])))) }
     do {
-      let candidates = try await lookups.search(typeID: input.path.typeID, request)
-      return .ok(.init(body: .json(.init(candidates: Self.best(candidates, limit: request.limit ?? 5)))))
+      let candidates = try await lookups.identify(typeID: input.path.typeID, hints)
+      return .ok(.init(body: .json(.init(candidates: Self.best(candidates, limit: hints.limit ?? 5)))))
     } catch let unavailable as SourceUnavailable {
       return .serviceUnavailable(Self.unavailable(unavailable))
     }
+  }
+
+  private static func badIdentify(_ detail: String?) -> Operations.IdentifyObject.Output {
+    .badRequest(.init(body: .applicationProblemJson(ProblemKind.badRequest.schema(detail: detail))))
   }
 
   // MARK: - match

@@ -56,18 +56,21 @@ struct ContractTests {
     #"{"title":"x","#,
     #"{"title":42}"#,
   ])
-  func searchRefusesWhatTheContractForbids(_ body: String) async throws {
-    let (status, text) = try await post("/v1/types/video-game/search", body)
+  func identifyRefusesWhatTheContractForbids(_ body: String) async throws {
+    let (status, text) = try await post("/v1/types/video-game/identify", body)
     #expect(status == .badRequest, "\(body) → \(text)")
     #expect(text.contains("/problems/bad-request"))
     #expect(!text.contains("DecodingError"))
   }
 
-  @Test func searchTitleLengthCountsCharacters() async throws {
-    let ok = try await post("/v1/types/video-game/search", #"{"title":""# + String(repeating: "é", count: 300) + #""}"#)
+  @Test func identifyTitleLengthCountsCharacters() async throws {
+    let ok = try await post(
+      "/v1/types/video-game/identify",
+      #"{"title":""# + String(repeating: "é", count: 300) + #""}"#
+    )
     #expect(ok.0 == .ok)
     let tooLong = try await post(
-      "/v1/types/video-game/search",
+      "/v1/types/video-game/identify",
       #"{"title":""# + String(repeating: "é", count: 301) + #""}"#
     )
     #expect(tooLong.0 == .badRequest)

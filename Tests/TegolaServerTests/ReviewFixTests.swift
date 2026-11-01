@@ -130,10 +130,10 @@ struct ReviewFixTests {
     }
     let body = HTTPBody(chunks, length: .unknown, iterationBehavior: .single)
     let (response, _) = try await middleware.intercept(
-      HTTPRequest(method: .post, scheme: nil, authority: nil, path: "/v1/types/music/search"),
+      HTTPRequest(method: .post, scheme: nil, authority: nil, path: "/v1/app-attest/keys"),
       body: body,
       metadata: .init(),
-      operationID: "searchObjects"
+      operationID: "registerAttestKey"
     ) { _, _, _ in
       Issue.record("the handler must not run")
       return (HTTPResponse(status: .ok), nil)
@@ -170,7 +170,7 @@ struct ReviewFixTests {
     let requestHeaders = headers
     try await server.run { client in
       try await client.execute(
-        uri: "/v1/types/video-game/search",
+        uri: "/v1/types/video-game/identify",
         method: .post,
         headers: requestHeaders,
         body: ByteBuffer(string: "{}")
