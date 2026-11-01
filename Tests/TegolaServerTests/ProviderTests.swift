@@ -325,6 +325,21 @@ func query(_ request: OutboundRequest, _ name: String) -> String? {
     #expect(query(sent[1], "id") == "31260,200680,12345")
   }
 
+  /// Popular games list dozens of publishers: the asked one counts wherever it is in the list.
+  @Test func theAskedPublisherCountsDeepInALongList() async throws {
+    let lookout = #"<link type="boardgamepublisher" id="2" value="Lookout Games"/>"#
+    let fillers = (0..<40).map { #"<link type="boardgamepublisher" id="\#(100 + $0)" value="Edition \#($0)"/>"# }
+    let thing = Fixture.bggThing.replacingOccurrences(of: lookout, with: fillers.joined(separator: "\n") + lookout)
+    let transport = ReplayTransport([("xmlapi2/search", xml(Fixture.bggSearch)), ("xmlapi2/thing", xml(thing))])
+    let game = try #require(
+      try await source(transport).candidates(
+        .init(title: "Agricola", subtitle: "Z-Man Games", year: 2007, limit: 5, reason: .title)
+      ).first
+    )
+    #expect(game.subtitle == "Edition 0")
+    #expect(game.confidence == 1)
+  }
+
   @Test func playersReadsLikeTheTypeFile() {
     #expect(BoardGameGeekProvider.players(minimum: 2, maximum: 4) == "2–4")
     #expect(BoardGameGeekProvider.players(minimum: 2, maximum: 2) == "2")
@@ -337,9 +352,10 @@ final class ScriptedProvider: DataProvider, @unchecked Sendable {
   let name: String
   let typeID: String
   let idPrefix: String
-  let answersBarcodes = true
+  let answersBarcodes: Bool
   let tier: ProviderTier
   var weights = ProviderWeights()
+  var delay: Duration?
   var failure: ProviderFailure?
   var answer: [ProviderRecord]
   private let lock = NSLock()
@@ -349,9 +365,11 @@ final class ScriptedProvider: DataProvider, @unchecked Sendable {
     _ name: String,
     typeID: String = "music",
     tier: ProviderTier = .primary,
+    answersBarcodes: Bool = true,
     answer: [ProviderRecord] = [],
     failure: ProviderFailure? = nil
   ) {
+    self.answersBarcodes = answersBarcodes
     self.name = name
     self.typeID = typeID
     self.tier = tier
@@ -368,8 +386,14 @@ final class ScriptedProvider: DataProvider, @unchecked Sendable {
     return answer
   }
 
-  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [ProviderRecord] { try respond() }
-  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [ProviderRecord] { try respond() }
+  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [ProviderRecord] {
+    if let delay { try? await Task.sleep(for: delay) }
+    return try respond()
+  }
+  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [ProviderRecord] {
+    if let delay { try? await Task.sleep(for: delay) }
+    return try respond()
+  }
   func work(id: String) async throws(ProviderFailure) -> Components.Schemas.Work? {
     _ = try respond()
     return .init(workID: id, title: "w", releases: [])
@@ -727,8 +751,9 @@ final class RecordingProvider: DataProvider, @unchecked Sendable {
     #expect(answer.count == 10)
     #expect(answer.first?.releaseID == "a:29")
     #expect(Set(answer.map(\.releaseID)) == Set((20..<30).map { "a:\($0)" }))
-    _ = try await service.match(typeID: "music", .init(ref: "r", title: words))
+    let again = try await service.match(typeID: "music", .init(ref: "r", title: words))
     #expect(provider.calls == 1)  // the ten were cached
+    #expect(again == answer)  // and a hit is scored as the miss was
   }
 
   /// Finding 8: simultaneous first requests share one token fetch.

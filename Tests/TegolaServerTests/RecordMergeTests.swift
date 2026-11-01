@@ -9,24 +9,27 @@ import Testing
 /// A video game's release as a provider would hand it in.
 func game(
   _ id: String,
+  typeID: String = "video-game",
   title: String = "Super Mario 64",
   subtype: String? = "n64",
   region: String? = "eu",
   year: Int? = 1997,
   fields: [String: String] = [:],
-  ids: [String: String] = [:]
+  ids: [String: String] = [:],
+  identifying: Set<String> = []
 ) -> ProviderRecord {
   let provider = String(id.prefix { $0 != ":" })
   return ProviderRecord(
     provider: provider,
     releaseID: id,
-    typeID: "video-game",
+    typeID: typeID,
     subtype: subtype,
     title: title,
     year: year,
     region: region,
     fields: fields.mapValues { .case1($0) },
     externalIDs: ids.isEmpty ? [provider: String(id.drop { $0 != ":" }.dropFirst())] : ids,
+    identifying: identifying,
     source: .init(name: provider)
   )
 }
@@ -73,16 +76,30 @@ func scored(_ record: ProviderRecord, _ confidence: Double = 0.8) -> ScoredRecor
     #expect(RecordMerge.candidates([scored(game("igdb:1")), scored(other)], order: order).count == 2)
   }
 
-  @Test func aSharedIDMergesWhateverTheTitles() throws {
+  @Test func aSharedReleaseIDMergesWhateverTheTitles() throws {
     let candidates = RecordMerge.candidates(
       [
-        scored(game("igdb:1", title: "Mario 64", year: nil, ids: ["igdb": "1"])),
-        scored(game("wikidata:Q1", title: "Super Mario 64", subtype: nil, ids: ["wikidata": "Q1", "igdb": "1"])),
+        scored(game("igdb:1", title: "Mario 64", year: nil, ids: ["igdb": "1", "r": "7"], identifying: ["r"])),
+        scored(game("wikidata:Q1", subtype: nil, ids: ["wikidata": "Q1", "r": "7"], identifying: ["r"])),
       ],
       order: order
     )
     #expect(candidates.count == 1)
-    #expect(try #require(candidates.first).externalIDs?.additionalProperties == ["igdb": "1", "wikidata": "Q1"])
+    #expect(
+      try #require(candidates.first).externalIDs?.additionalProperties == ["igdb": "1", "r": "7", "wikidata": "Q1"]
+    )
+  }
+
+  /// IGDB's id names the game, which every platform's release shares: an item carrying it isn't this release.
+  @Test func aWorkLevelIDIsntProofOfARelease() {
+    let candidates = RecordMerge.candidates(
+      [
+        scored(game("igdb:1", ids: ["igdb": "1"])),
+        scored(game("wikidata:Q1", title: "Mario 64", ids: ["wikidata": "Q1", "igdb": "1"])),
+      ],
+      order: order
+    )
+    #expect(candidates.count == 2)
   }
 
   @Test func recordsThatDisagreeOnAnIDAreTwoReleases() {
@@ -96,13 +113,13 @@ func scored(_ record: ProviderRecord, _ confidence: Double = 0.8) -> ScoredRecor
     #expect(candidates.count == 2)
   }
 
-  /// A work-level id names every platform's release: the record that could be either stays on its own.
+  /// A record that could be either of two records of another provider stays on its own.
   @Test func aLinkMustBeOneToOne() {
     let candidates = RecordMerge.candidates(
       [
-        scored(game("igdb:1:n64", ids: ["igdb": "1"])),
-        scored(game("igdb:1:ds", subtype: "ds", ids: ["igdb": "1"])),
-        scored(game("wikidata:Q1", subtype: nil, ids: ["wikidata": "Q1", "igdb": "1"])),
+        scored(game("igdb:1:n64", ids: ["igdb": "1", "r": "1"], identifying: ["r"])),
+        scored(game("igdb:1:ds", subtype: "ds", ids: ["igdb": "1", "r": "1"], identifying: ["r"])),
+        scored(game("wikidata:Q1", subtype: nil, ids: ["wikidata": "Q1", "r": "1"], identifying: ["r"])),
       ],
       order: order
     )
@@ -121,12 +138,23 @@ func scored(_ record: ProviderRecord, _ confidence: Double = 0.8) -> ScoredRecor
   @Test func aCandidateNeverHoldsTwoRecordsOfOneProvider() throws {
     // A chain of one-to-one links, igdb:1 – screenscraper:7 – wikidata:Q1 – igdb:2, by ids only (no edition key:
     // the titles differ and there's no year). The last link would put two igdb records together, so it's refused.
+    let chain: Set<String> = ["x", "y", "z"]
     let candidates = RecordMerge.candidates(
       [
-        scored(game("igdb:1", title: "A", year: nil, ids: ["igdb": "1", "x": "a"])),
-        scored(game("screenscraper:7", title: "B", year: nil, ids: ["screenscraper": "7", "x": "a", "y": "b"])),
-        scored(game("wikidata:Q1", title: "C", year: nil, ids: ["wikidata": "Q1", "y": "b", "z": "c"])),
-        scored(game("igdb:2", title: "D", year: nil, ids: ["igdb": "2", "z": "c"])),
+        scored(game("igdb:1", title: "A", year: nil, ids: ["igdb": "1", "x": "a"], identifying: chain)),
+        scored(
+          game(
+            "screenscraper:7",
+            title: "B",
+            year: nil,
+            ids: ["screenscraper": "7", "x": "a", "y": "b"],
+            identifying: chain
+          )
+        ),
+        scored(
+          game("wikidata:Q1", title: "C", year: nil, ids: ["wikidata": "Q1", "y": "b", "z": "c"], identifying: chain)
+        ),
+        scored(game("igdb:2", title: "D", year: nil, ids: ["igdb": "2", "z": "c"], identifying: chain)),
       ],
       order: order
     )
@@ -134,6 +162,21 @@ func scored(_ record: ProviderRecord, _ confidence: Double = 0.8) -> ScoredRecor
     let merged = try #require(candidates.first { $0.sources.count > 1 })
     #expect(merged.releaseID == "igdb:1")
     #expect(merged.sources.map(\.name) == ["igdb", "screenscraper", "wikidata"])
+  }
+
+  /// Links are checked in pairs; a chain still never joins two records that disagree on an id.
+  @Test func aChainNeverJoinsRecordsThatDisagreeOnAnID() throws {
+    let candidates = RecordMerge.candidates(
+      [
+        scored(game("igdb:1", title: "A", year: nil, ids: ["igdb": "1", "x": "a"], identifying: ["x"])),
+        scored(game("screenscraper:7", title: "B", year: nil, ids: ["x": "a", "y": "b"], identifying: ["x", "y"])),
+        scored(game("wikidata:Q1", title: "C", year: nil, ids: ["y": "b", "igdb": "9"], identifying: ["y"])),
+      ],
+      order: order
+    )
+    #expect(candidates.count == 2)
+    let alone = try #require(candidates.first { $0.releaseID == "wikidata:Q1" })
+    #expect(alone.externalIDs?.additionalProperties["igdb"] == "9")
   }
 
   @Test func theSameRecordFoundTwiceIsOneWithBothReasons() throws {
@@ -174,6 +217,54 @@ func scored(_ record: ProviderRecord, _ confidence: Double = 0.8) -> ScoredRecor
     #expect(games.map(\.releaseID) == ["igdb:1"])
     let music = try await service.match(typeID: "music", .init(ref: "r", title: "a:2"))
     #expect(music.map(\.releaseID) == ["a:2"])
+  }
+}
+
+/// The router's side of the merge.
+@Suite struct RouterMergeTests {
+  @Test func theConfiguredFirstLeadsWhoeverAnswersFirst() async throws {
+    let igdb = ScriptedProvider("igdb", typeID: "video-game", answer: [game("igdb:1")])
+    igdb.delay = .milliseconds(200)
+    let service = LookupRouter(sources: [
+      igdb, ScriptedProvider("screenscraper", typeID: "video-game", answer: [game("screenscraper:7")]),
+    ])
+    let candidates = try await service.match(typeID: "video-game", .init(ref: "r", title: "Super Mario 64"))
+    #expect(candidates.map(\.releaseID) == ["igdb:1"])
+  }
+
+  /// Identify asks one provider by barcode and another by words; the same release is one candidate.
+  @Test func oneProvidersBarcodeAndAnothersWordsMerge() async throws {
+    let service = LookupRouter(sources: [
+      BarcodeOnlyProvider(answer: [game("a:1", typeID: "music")]),
+      ScriptedProvider("b", answersBarcodes: false, answer: [game("b:1", typeID: "music")]),
+    ])
+    let candidates = try await service.identify(
+      typeID: "music",
+      .init(title: "Super Mario 64", barcode: .init(code: "724385522925"))
+    )
+    let candidate = try #require(candidates.first)
+    #expect(candidates.count == 1)
+    #expect(candidate.releaseID == "a:1")
+    #expect(candidate.reasons.map(\.kind) == [.barcode, .title])
+    #expect(candidate.sources.map(\.name) == ["a", "b"])
+  }
+
+  /// A provider speaks only for itself: a record with another provider's id prefix, or another type, is dropped.
+  @Test func aBarcodeRecordWithAnotherPrefixOrTypeIsDropped() async throws {
+    var foreign = record("a:9")
+    foreign.releaseID = "zzz:1"
+    let service = LookupRouter(sources: [
+      ScriptedProvider("a", answer: [record("a:1"), record("a:2", typeID: "video-game"), foreign])
+    ])
+    #expect(try await service.barcode(.init(typeID: "music", code: "724385522925")).map(\.releaseID) == ["a:1"])
+  }
+
+  /// Words that fold to nothing are ranked as words, no words by the source's relevance: two answers, two keys.
+  @Test func noWordsAndWordsThatFoldToNothingAreCachedApart() {
+    let blank = SearchQuery(title: "", catalogueNumber: "CDP 7243", limit: 5, reason: .title)
+    var punctuation = blank
+    punctuation.title = "?"
+    #expect(blank.cacheKey != punctuation.cacheKey)
   }
 }
 

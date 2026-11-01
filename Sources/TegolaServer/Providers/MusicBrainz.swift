@@ -143,6 +143,7 @@ struct MusicBrainzProvider: DataProvider {
       fields: fields,
       images: Self.images(release, mbid: mbid) ?? [],
       externalIDs: externalIDs,
+      identifying: ["musicbrainz"],
       source: Self.source
     )
   }

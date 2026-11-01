@@ -25,8 +25,12 @@ struct ProviderRecord: Sendable, Hashable {
   var fields: [String: Components.Schemas.FieldValue] = [:]
   var images: [Components.Schemas.Image] = []
   /// Ids in other databases, the provider's own included, by namespace (`musicbrainz`, `igdb`, `wikidata`). Two
-  /// records that share one are the same release; two that disagree on one never are.
+  /// records that disagree on one are never the same release.
   var externalIDs: [String: String] = [:]
+  /// The namespaces of `externalIDs` that name this very release, not its game or work (MusicBrainz's release mbid,
+  /// not its release group; never IGDB's game id, which every platform's release shares). Two records that share an
+  /// id in a namespace both call identifying are the same release.
+  var identifying: Set<String> = []
   /// What the source matched exactly, beyond the words the router compares itself: a `catalogueNumber`, a `subtype`.
   /// A record from a barcode lookup is an exact barcode match by definition (the provider drops the others).
   var matched: Set<Kind> = []
@@ -102,10 +106,11 @@ enum Ranking {
 }
 
 /// Turns one tier's scored records into candidates (D-27). Records from different providers become one candidate
-/// only when they certainly name the same release: they share an external id, or they agree exactly on the type, the
-/// title, the subtype, the region and the year. A similar title is never enough, so two pressings' fields can't mix.
-/// A link must also be one to one: a record that could be either of two records of another provider (a work-level id,
-/// a reissue) stays on its own. A candidate never holds two records of one provider.
+/// only when they certainly name the same release: they share a release-level external id (`identifying`), or they
+/// agree exactly on the type, the title, the subtype, the region and the year. A similar title is never enough, so two
+/// pressings' fields can't mix. A link must also be one to one: a record that could be either of two records of
+/// another provider (a reissue) stays on its own. A candidate never holds two records of one provider, nor two that
+/// disagree on an id, however they're linked.
 enum RecordMerge {
   typealias Candidate = Components.Schemas.Candidate
 
@@ -114,7 +119,7 @@ enum RecordMerge {
   static func candidates(_ scored: [ScoredRecord], order: [String]) -> [Candidate] {
     let records = sameRecords(scored)
     let rank: (ScoredRecord) -> Int = { order.firstIndex(of: $0.record.provider) ?? order.count }
-    var groups = UnionFind(count: records.count, providers: records.map(\.record.provider))
+    var groups = UnionFind(records.map(\.record))
     for (a, b) in links(records) { groups.union(a, b) }
     return groups.groups()
       .map { members in candidate(members.map { records[$0] }.sorted { rank($0) < rank($1) }) }
@@ -167,12 +172,9 @@ enum RecordMerge {
 
   /// Whether two records of different providers certainly name the same release.
   static func same(_ a: ProviderRecord, _ b: ProviderRecord) -> Bool {
-    guard a.provider != b.provider, a.typeID == b.typeID else { return false }
-    var shared = false
-    for (namespace, value) in a.externalIDs {
-      guard let other = b.externalIDs[namespace] else { continue }
-      if other != value { return false }  // they disagree on an id: two releases
-      shared = true
+    guard a.provider != b.provider, a.typeID == b.typeID, !conflict(a.externalIDs, b.externalIDs) else { return false }
+    let shared = a.identifying.intersection(b.identifying).contains { namespace in
+      a.externalIDs[namespace].map { $0 == b.externalIDs[namespace] } ?? false
     }
     if shared { return true }
     guard let key = editionKey(a), key == editionKey(b) else { return false }
@@ -227,14 +229,22 @@ enum RecordMerge {
     )
   }
 
-  /// Groups of record indices; a union that would put two records of one provider together is refused.
+  /// Whether two sets of ids disagree on a namespace they both have.
+  static func conflict(_ a: [String: String], _ b: [String: String]) -> Bool {
+    a.contains { namespace, value in b[namespace].map { $0 != value } ?? false }
+  }
+
+  /// Groups of record indices. A union that would put two records of one provider together, or two records that
+  /// disagree on an id, is refused: links are checked pairwise, so a chain could otherwise join them.
   struct UnionFind {
     private var parent: [Int]
     private var providers: [Set<String>]
+    private var ids: [[String: String]]
 
-    init(count: Int, providers: [String]) {
-      parent = Array(0..<count)
-      self.providers = providers.map { [$0] }
+    init(_ records: [ProviderRecord]) {
+      parent = Array(records.indices)
+      providers = records.map { [$0.provider] }
+      ids = records.map(\.externalIDs)
     }
 
     mutating func root(_ index: Int) -> Int {
@@ -248,10 +258,11 @@ enum RecordMerge {
 
     mutating func union(_ a: Int, _ b: Int) {
       let (x, y) = (root(a), root(b))
-      guard x != y, providers[x].isDisjoint(with: providers[y]) else { return }
+      guard x != y, providers[x].isDisjoint(with: providers[y]), !RecordMerge.conflict(ids[x], ids[y]) else { return }
       let (keep, drop) = x < y ? (x, y) : (y, x)
       parent[drop] = keep
       providers[keep].formUnion(providers[drop])
+      ids[keep].merge(ids[drop]) { kept, _ in kept }
     }
 
     mutating func groups() -> [[Int]] {

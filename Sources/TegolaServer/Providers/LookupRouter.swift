@@ -56,9 +56,10 @@ struct SearchQuery: Sendable, Hashable {
   /// The cache key: everything that changes the answer, normalised, encoded as a JSON array so no value can run
   /// into the next one.
   var cacheKey: String {
+    // Whether there are words at all: words that fold to nothing ("?") are still ranked as words, unlike none.
     let parts: [String?] = [
-      TextMatch.normalise(title), subtitle.map(TextMatch.normalise), catalogueNumber, year.map(String.init), subtype,
-      region, String(limit), reason.rawValue,
+      TextMatch.normalise(title), String(title.isEmpty), subtitle.map(TextMatch.normalise), catalogueNumber,
+      year.map(String.init), subtype, region, String(limit), reason.rawValue,
     ]
     return cacheKeyString(parts)
   }
@@ -236,7 +237,9 @@ package struct LookupRouter: LookupService {
           if let cached = await cache.value(cacheKey) { return (index, .success(cached.map { score($0, source) })) }
           do throws(ProviderFailure) {
             let scored = try await body(source)
-              .filter { $0.provider == source.name && $0.typeID == source.typeID }
+              .filter {
+                $0.provider == source.name && $0.typeID == source.typeID && $0.releaseID.hasPrefix(source.idPrefix)
+              }
               .map { score($0, source) }
               .sorted { $0.confidence > $1.confidence }
               .prefix(10)

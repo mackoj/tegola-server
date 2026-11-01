@@ -15,9 +15,9 @@ exists: M4's end-to-end run waits only on a host and a device.
 1. **M5, next task: T5.3 manifests** (`tasks/plan.md`, M5; D-27 says what changed from the proposal and why). Then
    T5.4 caches by licence, T5.5 ledger, budget and kill switch. The owner's answers: keep the cost data and group it
    later; assume some sources will be paid; one repo.
-2. **tegola: the proposal's product half** (sections 05–06: free-tier caps, type packs, a subscription, and the
-   per-install pseudonym in the ledger) recorded as a proposal for the owner. It conflicts with tegola D-25 and
-   ADR-0001; it's the owner's call, so record it, don't decide it.
+2. **tegola D-76 (PR #19): the proposal's product half**, recorded for the owner to decide: free-tier caps, type
+   packs, a subscription (sections 05–06), and the ledger's per-install pseudonym. It conflicts with tegola D-25 and
+   ADR-0001. Merge the PR once its CI is green; the decisions stay the owner's.
 3. **Owner, keys:** register the providers' keys (`deploy/env.example`, "Lookup sources"): a MusicBrainz contact, a
    Twitch application for IGDB, a ScreenScraper developer account, a BoardGameGeek XML API token. Then, with the
    keys, re-record `Tests/TegolaServerTests/ProviderFixtures.swift` from the live APIs: they're hand-written from the
@@ -31,8 +31,9 @@ exists: M4's end-to-end run waits only on a host and a device.
    - whether IGDB's and ScreenScraper's titles, regions and years agree often enough to merge (D-27).
 4. **Adding a provider:** write (or fetch) its description in `api/sources/`, add a `<Name>API` target in
    `Package.swift` (copy an existing one), and conform a type to `DataProvider` in `Sources/TegolaServer/Providers/`.
-   It returns `ProviderRecord`s: fill the type file's field keys, the external ids (its own included), and `matched`
-   for what it matched exactly; never a confidence (D-27). Then wire it in `ProviderFactory.swift` and
+   It returns `ProviderRecord`s: fill the type file's field keys, the external ids (its own included), `identifying`
+   for those that name the release itself (not its game or work), and `matched` for what it matched exactly; never a
+   confidence (D-27). Then wire it in `ProviderFactory.swift` and
    `SourceSettings`, and add tests with fixtures that carry the real Content-Type. A general source that should only
    answer when the type's own find nothing sets `tier: .fallback` (D-26), and `weights` when its matches are looser.
 5. **Dependabot PRs**, weekly: merge one only once both `linux` and `docker` are green (the `docker` job takes about
@@ -58,8 +59,8 @@ update.
 
 - **Spec:** `docs/PLAN.md`; decisions D-1 to D-27 in `docs/DECISIONS.md`.
 - **M5 (providers, in progress):** D-27. Providers return `ProviderRecord`s; `Ranking` scores them (D-22's formula
-  times `ProviderWeights`); `RecordMerge` makes one candidate of records that share an external id or agree on type,
-  title, subtype, region and year, one to one. Tests: `RecordMergeTests.swift`.
+  times `ProviderWeights`); `RecordMerge` makes one candidate of records that share a release-level external id
+  (`identifying`) or agree on type, title, subtype, region and year, one to one. Tests: `RecordMergeTests.swift`.
 - **M1 (foundation):** the contract's seven operations served by Hummingbird 2 from generated code. App Attest
   registration and assertions are verified end to end, with every control of PLAN §5 and no lookup source yet (D-12).
   Report: `docs/milestones/M1.md`.

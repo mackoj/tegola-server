@@ -60,7 +60,7 @@ Plan: `tasks/plan.md`, M5. Decision: D-27 (the owner's proposal, `docs/proposals
 - [ ] T5.5 Ledger, budget guard, kill switch
 - [ ] T5.6 Recognizer protocol (when an image source is chosen)
 - [ ] T5.7 Docs, report, review agent
-- [ ] tegola: the product half (sections 05–06) recorded as a proposal for the owner
+- [x] tegola: the product half (sections 05–06) recorded as a proposal for the owner (tegola D-76, PR #19)
 
 ## Open follow-ups
 

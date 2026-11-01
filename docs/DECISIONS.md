@@ -564,13 +564,27 @@ second package in this repo.
   `ProviderWeights`. An exact barcode is 0.95 (Wikidata 0.9). A catalogue number with no words uses the source's
   relevance, up to 0.9. A catalogue number matched exactly lifts the score to 0.9. Every provider's numbers are as
   before.
-- **`RecordMerge`.** Two providers' records are one candidate when they share an external id, or when they have
-  the same type, title (folded), subtype, region and year, all five present. Records that disagree on an id never
-  merge. A link must be one to one: a record that could be either of two records of another provider (a work-level
-  id, reissues) stays on its own. A candidate never holds two records of one provider. The type's configured order
-  picks the leading record, whose id, title and fields win; the others fill in what it lacks, and every source is
-  listed. Candidates come best first, ties broken by id.
+- **`RecordMerge`.** Two providers' records are one candidate when they share a release-level external id, or when
+  they have the same type, title (folded), subtype, region and year, all five present.
+  - A record says which of its ids name the release itself (`identifying`): MusicBrainz's release mbid. IGDB's,
+    ScreenScraper's and BGG's ids name the game, which every platform's release shares, so they don't count.
+  - Records that disagree on an id never merge, even through a chain of other links.
+  - A link must be one to one: a record that could be either of two records of another provider (reissues) stays on
+    its own.
+  - A candidate never holds two records of one provider.
+  - The type's configured order picks the leading record, whose id, title and fields win; the others fill in what it
+    lacks, and every source is listed.
+  - Candidates come best first, ties broken by id.
 - **The router** caches each provider's records, cut to its best 10, and scores them on every read. It drops a
-  record that names another provider or type. It merges in the configured order, whoever answered first.
+  record that names another provider, type or id prefix. It merges in the configured order, whoever answered first.
+  A query with no words and one whose words fold to nothing ("?") are ranked differently, so they're cached apart.
+- **The review** (a separate agent, over this change) found nothing serious in what runs today. Each finding is now
+  fixed, with a test:
+  - a BGG record kept only 30 publishers, so a publisher asked for further down the list scored less than before (it
+    now keeps the closest one too);
+  - a chain of links could join records that disagree on an id;
+  - game-level ids counted as release identity;
+  - the router didn't check the id prefix;
+  - the cache key above.
 - **What changes for the app:** IGDB and ScreenScraper no longer return one game twice. An import row both find is
   `matched`, where it used to be `ambiguous` (D-13).

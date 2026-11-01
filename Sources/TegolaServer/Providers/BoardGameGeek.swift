@@ -56,7 +56,7 @@ struct BoardGameGeekProvider: DataProvider {
     }
     .prefix(min(10, query.limit * 2))
     guard !best.isEmpty else { return [] }
-    return try await things(best.map(\.id)).compactMap(record)
+    return try await things(best.map(\.id)).compactMap { record($0, asked: query.subtitle) }
   }
 
   func work(id: String) async throws(ProviderFailure) -> Components.Schemas.Work? {
@@ -128,7 +128,7 @@ struct BoardGameGeekProvider: DataProvider {
   // MARK: - mapping
 
   /// One game. Its subtitle is the first publisher; a query's subtitle is compared with each of them.
-  private func record(_ game: Item) -> ProviderRecord? {
+  private func record(_ game: Item, asked: String?) -> ProviderRecord? {
     guard let title = TextMatch.clean(game.name) else { return nil }
     var fields: [String: Components.Schemas.FieldValue] = [:]
     let designers = game.designers.compactMap { TextMatch.clean($0) }.prefix(3)
@@ -144,7 +144,17 @@ struct BoardGameGeekProvider: DataProvider {
     if let url = allowedImageURL(game.thumbnail, hosts: Self.imageHosts) {
       images.append(.init(role: .thumbnail, url: url))
     }
-    let publishers = game.publishers.prefix(30).compactMap { TextMatch.clean($0) }
+    // Popular games list dozens of publishers. The record keeps the first 30, plus the one closest to the asked
+    // subtitle wherever it is, so the router's ranking sees the same best match and a cached record stays small.
+    let publishers = game.publishers.compactMap { TextMatch.clean($0) }
+    var others = Array(publishers.dropFirst().prefix(30))
+    if let asked, !asked.isEmpty,
+      let closest = publishers.dropFirst().max(by: {
+        TextMatch.similarity(asked, $0) < TextMatch.similarity(asked, $1)
+      }), !others.contains(closest)
+    {
+      others.append(closest)
+    }
     return ProviderRecord(
       provider: name,
       releaseID: "boardgamegeek:\(game.id)",
@@ -152,7 +162,7 @@ struct BoardGameGeekProvider: DataProvider {
       typeID: typeID,
       title: title,
       subtitle: publishers.first,
-      otherSubtitles: Array(publishers.dropFirst()),
+      otherSubtitles: others,
       year: game.year,
       fields: fields,
       images: images,
