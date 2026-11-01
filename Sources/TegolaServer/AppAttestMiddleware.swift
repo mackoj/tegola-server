@@ -9,14 +9,15 @@ import OpenAPIRuntime
 /// list of public operations is explicit and anything else is secured: a new operation is secured until it's added
 /// to `publicOperations`, never the other way round.
 ///
-/// 1. Reads the body up to the cap (413 beyond), so the assertion can cover it and the decoder never sees more.
-/// 2. Public operations pass.
-/// 3. Development servers accept `X-Tegola-Debug-Token` when it matches (compared in constant time). Production never
+/// 1. Public operations read the body up to their cap (413 beyond) and pass.
+/// 2. Development servers accept `X-Tegola-Debug-Token` when it matches (compared in constant time). Production never
 ///    gets here with one: `EdgeMiddleware` has already answered 403.
-/// 4. Otherwise: key id, timestamp within the tolerance, assertion over the request, counter strictly increasing.
-///    Every failure is the same 401, except an unknown key (401 `…/unknown-key`, so the app registers again) and a
-///    revoked key (403).
-/// 5. The per-key rate limit. Registration calls, being public, take the stricter per-client registration bucket
+/// 3. Otherwise: key id, timestamp within the tolerance and a known, unrevoked key, all from the headers; only then
+///    the body, read up to the operation's cap (413 beyond), so a caller without a key can't make the server read an
+///    identify body's 3 MiB (D-24). Then the assertion over the request and a strictly increasing counter. Every
+///    failure is the same 401, except an unknown key (401 `…/unknown-key`, so the app registers again) and a revoked
+///    key (403).
+/// 4. The per-key rate limit. Registration calls, being public, take the stricter per-client registration bucket
 ///    instead, chosen here by operation id rather than by path (D-19).
 struct AppAttestMiddleware: ServerMiddleware {
   static let publicOperations: Set<String> = ["getAttestChallenge", "registerAttestKey", "health"]
@@ -38,17 +39,13 @@ struct AppAttestMiddleware: ServerMiddleware {
     operationID: String,
     next: @Sendable (HTTPRequest, HTTPBody?, ServerRequestMetadata) async throws -> (HTTPResponse, HTTPBody?)
   ) async throws -> (HTTPResponse, HTTPBody?) {
-    let bytes: [UInt8]
-    do {
-      if let body {
-        bytes = try await [UInt8](collecting: body, upTo: configuration.limits.maximumBodyBytes)
-      } else {
-        bytes = []
-      }
-    } catch {
-      return ProblemEncoding.openAPIResponse(.payloadTooLarge)
+    let cap = configuration.limits.maximumBodyBytes(for: operationID)
+    /// The body up to the cap, or nil beyond it; replayed to the decoder from memory, so it never sees more.
+    func collect() async -> [UInt8]? {
+      guard let body else { return [] }
+      return try? await [UInt8](collecting: body, upTo: cap)
     }
-    let replayableBody: HTTPBody? = body == nil ? nil : HTTPBody(bytes)
+    func replay(_ bytes: [UInt8]) -> HTTPBody? { body == nil ? nil : HTTPBody(bytes) }
 
     if Self.publicOperations.contains(operationID) {
       if Self.registrationOperations.contains(operationID),
@@ -56,7 +53,8 @@ struct AppAttestMiddleware: ServerMiddleware {
       {
         return ProblemEncoding.openAPIResponse(.tooManyRequests, retryAfter: retryAfter)
       }
-      return try await next(request, replayableBody, metadata)
+      guard let bytes = await collect() else { return ProblemEncoding.openAPIResponse(.payloadTooLarge) }
+      return try await next(request, replay(bytes), metadata)
     }
 
     if let presented = request.headerFields[.tegolaDebugToken] {
@@ -68,17 +66,27 @@ struct AppAttestMiddleware: ServerMiddleware {
         logger.notice("auth failed", metadata: ["operation": "\(operationID)", "reason": "debugToken"])
         return ProblemEncoding.openAPIResponse(.unauthorized)
       }
-      return try await next(request, replayableBody, metadata)
+      guard let bytes = await collect() else { return ProblemEncoding.openAPIResponse(.payloadTooLarge) }
+      return try await next(request, replay(bytes), metadata)
     }
 
-    switch await authenticate(request, body: bytes) {
+    var collected: [UInt8] = []
+    let outcome = await authenticate(request) {
+      guard let bytes = await collect() else { return nil }
+      collected = bytes
+      return bytes
+    }
+    switch outcome {
     case .success(let keyID):
       let key = keyID.base64EncodedString()
       if case .limited(let retryAfter) = await perKey.take(key) {
         return ProblemEncoding.openAPIResponse(.tooManyRequests, retryAfter: retryAfter)
       }
-      return try await RequestScope.$keyID.withValue(key) { try await next(request, replayableBody, metadata) }
+      return try await RequestScope.$keyID.withValue(key) { [collected] in
+        try await next(request, replay(collected), metadata)
+      }
     case .failure(let failure):
+      if failure.problem == .payloadTooLarge { return ProblemEncoding.openAPIResponse(.payloadTooLarge) }
       logger.notice("auth failed", metadata: ["operation": "\(operationID)", "reason": "\(failure.reason)"])
       // A store that can't answer is the server's problem, not the caller's: 503, retry shortly.
       return ProblemEncoding.openAPIResponse(failure.problem, retryAfter: failure.problem == .unavailable ? 5 : nil)
@@ -90,7 +98,8 @@ struct AppAttestMiddleware: ServerMiddleware {
     var reason: String
   }
 
-  func authenticate(_ request: HTTPRequest, body: [UInt8]) async -> Result<Data, AuthFailure> {
+  /// Checks the headers and the key first, then asks `body` for the body (nil when it's over the cap: 413).
+  func authenticate(_ request: HTTPRequest, body: () async -> [UInt8]?) async -> Result<Data, AuthFailure> {
     func fail(_ reason: String, _ problem: ProblemKind = .unauthorized) -> Result<Data, AuthFailure> {
       .failure(AuthFailure(problem: problem, reason: reason))
     }
@@ -121,6 +130,7 @@ struct AppAttestMiddleware: ServerMiddleware {
       return fail("environment", .forbidden)
     }
 
+    guard let body = await body() else { return fail("bodyTooLarge", .payloadTooLarge) }
     let clientDataHash = RequestSignature.clientDataHash(
       method: request.method.rawValue,
       pathWithQuery: path,

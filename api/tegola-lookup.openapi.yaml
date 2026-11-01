@@ -1,17 +1,18 @@
 openapi: 3.1.0
 info:
   title: Tegola Lookup API
-  version: 0.1.0
-  summary: Identify a physical object from a barcode or a few words, and match a list of titles in one go.
+  version: 0.2.0
+  summary: Identify a physical object from a barcode, a few words or a photo, and match a list of titles in one go.
   description: |
     The contract between the Tegola iPhone app and `mackoj/tegola-server`. The server implements it; the app
     generates its client from this file with swift-openapi-generator. Changing this file is how either side asks for
     a change.
 
     **What the app sends, and what it never sends.** A barcode, a catalogue number, a title, OCR text read from a
-    label, and the type and subtype the collector chose. Never a photo, never anything about the rest of the shelf,
-    never a name, price, place or device identifier (PLAN §2.7, PD-095, PD-118). Requests carry no account: there is
-    none (ADR-0001).
+    label, and the type and subtype the collector chose. A photo only through Identify (`POST
+    /types/{typeID}/identify`): one shot, sent when the collector turns Identify on for it, off by default, with its
+    metadata stripped (PD-118, D-71). Never anything about the rest of the shelf, never a name, price, place or device
+    identifier (PLAN §2.7, PD-095). Requests carry no account: there is none (ADR-0001).
 
     **What the server never decides.** A response proposes; the collector confirms. Every candidate says why it was
     proposed (`reasons`) and how sure the server is (`confidence`). The app shows both and writes nothing until the
@@ -42,7 +43,8 @@ info:
     Transport: HTTPS only (TLS 1.2 or later, TLS 1.3 preferred), no plain HTTP, HSTS on the host. The app uses an
     ephemeral `URLSession` (no cookies, no cache on disk). Rate limits apply per attested key and per IP and answer
     `429` with `Retry-After`. Request bodies are capped (see each schema's `maxLength`/`maxItems`) and answer `413`
-    beyond that. Server logs keep no request bodies and no OCR text.
+    beyond that. Server logs keep no request bodies, no OCR text and no images. The server keeps a photo only for as
+    long as it takes to answer, and never stores it, caches it or hands it to a source that keeps it.
   license:
     name: Proprietary
     identifier: LicenseRef-Proprietary
@@ -54,7 +56,7 @@ servers:
         description: Placeholder until tegola-server has a host.
 tags:
   - name: lookup
-    description: One object at a time, from the camera or the add form.
+    description: One object at a time, from the camera, the add form or the first piece.
   - name: match
     description: Many titles at once, for an import.
   - name: works
@@ -123,14 +125,27 @@ paths:
         "503":
           $ref: "#/components/responses/Unavailable"
 
-  /types/{typeID}/search:
+  /types/{typeID}/identify:
     post:
       tags: [lookup]
-      operationId: searchObjects
-      summary: Identify an object from a few words.
+      operationId: identifyObject
+      summary: Identify an object from words, a photo and a barcode, in any combination.
       description: |
-        For objects without a barcode, a title typed by hand, OCR text from a spine or label, or a catalogue number.
-        POST because OCR text can be long and should not end up in URLs or access logs.
+        Every lookup that isn't a bare barcode: a title typed by hand, OCR text from a spine or label, a catalogue
+        number, the first piece's guess, and the camera's Identify (PLAN F6). What the app knows about one object is
+        sent together, so the server can weigh it all at once.
+
+        Without a photo, the body is the hints as JSON. With one, it's `multipart/form-data`: the JPEG in `image` and
+        the hints in `hints`. At least one of a photo, a hint or a barcode must be there; the server answers `400`
+        otherwise. POST, so OCR text never ends up in a URL or an access log. A barcode on its own goes to
+        `lookupBarcode`, which caches.
+
+        **The photo** is sent only when the collector turns Identify on for that shot (PD-118, D-71). The app sends one
+        JPEG, cropped to the object where it can, at most 2048 px on its longest side and 2 MiB, with its EXIF, GPS
+        and every other metadata removed. The server reads it to answer this request and then drops it: it doesn't
+        store it, log it, cache it or pass it to a source that keeps it.
+
+        The App Attest assertion covers the whole multipart body, exactly as sent.
       parameters:
         - $ref: "#/components/parameters/TypeID"
         - $ref: "#/components/parameters/AcceptLanguage"
@@ -139,15 +154,23 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SearchRequest"
+              $ref: "#/components/schemas/IdentifyHints"
             example:
               title: Ridge Racer
               subtype: ps1
               region: PAL
               limit: 5
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/IdentifyRequest"
+            encoding:
+              image:
+                contentType: image/jpeg
+              hints:
+                contentType: application/json
       responses:
         "200":
-          description: Zero or more candidates, best first.
+          description: Zero or more candidates, best first. Each says which parts it rests on (`reasons`).
           content:
             application/json:
               schema:
@@ -158,6 +181,18 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "413":
+          description: The image is over 2 MiB, or the body is over 3 MiB.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "415":
+          description: The image isn't a JPEG.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
         "429":
           $ref: "#/components/responses/TooManyRequests"
         "503":
@@ -458,8 +493,23 @@ components:
       type: string
       maxLength: 128
 
-    SearchRequest:
-      description: At least one of `title`, `text` or `catalogueNumber` must be present; the server answers `400` otherwise.
+    IdentifyRequest:
+      description: At least one of `image`, a hint or `hints.barcode` must be present; the server answers `400` otherwise.
+      type: object
+      additionalProperties: false
+      properties:
+        image:
+          description: One JPEG of the object, at most 2048 px on its longest side and 2 MiB, metadata removed.
+          type: string
+          format: binary
+          maxLength: 2097152
+        hints:
+          $ref: "#/components/schemas/IdentifyHints"
+    IdentifyHints:
+      description: |
+        What the app knows about the object: words, OCR text, a barcode, alone or next to a photo. As the whole JSON
+        body, at least one of `title`, `text`, `catalogueNumber` or `barcode` must be present (D-33's rule for the old
+        search, D-71).
       type: object
       additionalProperties: false
       properties:
@@ -471,12 +521,14 @@ components:
           type: string
           maxLength: 300
         text:
-          description: Raw OCR text, newline-separated, as read from a spine or label.
+          description: Raw OCR text, newline-separated, as read from the object.
           type: string
           maxLength: 2000
         catalogueNumber:
           type: string
           maxLength: 64
+        barcode:
+          $ref: "#/components/schemas/BarcodeHint"
         year:
           type: integer
           minimum: 1800
@@ -490,6 +542,17 @@ components:
           minimum: 1
           maximum: 10
           default: 5
+    BarcodeHint:
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        code:
+          description: The digits as read, without spaces.
+          type: string
+          pattern: "^[0-9A-Za-z-]{6,32}$"
+        symbology:
+          $ref: "#/components/schemas/Symbology"
 
     MatchRequest:
       type: object
@@ -656,7 +719,7 @@ components:
       properties:
         kind:
           type: string
-          enum: [barcode, catalogueNumber, title, ocr, region, subtype, typoCorrected, bundleSplit]
+          enum: [barcode, catalogueNumber, title, ocr, image, region, subtype, typoCorrected, bundleSplit]
         detail:
           description: A short phrase for the collector, in the requested language ("Barcode matched exactly").
           type: string

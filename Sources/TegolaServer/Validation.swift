@@ -1,5 +1,5 @@
 /// The contract's limits that swift-openapi-generator doesn't enforce: `pattern`, `maxLength`, `minimum`/`maximum`,
-/// `maxItems`, and SearchRequest's "at least one of" rule. The generated decoders already refuse unknown keys
+/// `maxItems`, and IdentifyHints's "at least one of" rule. The generated decoders already refuse unknown keys
 /// (`additionalProperties: false`) and wrong types. Every handler checks its input here before using it, so nothing
 /// past this point sees an input the contract forbids (DECISIONS D-11).
 enum Validation {
@@ -37,20 +37,37 @@ enum Validation {
     try length(value, max: 128, "workID")
   }
 
-  static func search(_ request: Components.Schemas.SearchRequest) throws(Failure) {
-    try length(request.title, max: 300, "title")
-    try length(request.subtitle, max: 300, "subtitle")
-    try length(request.text, max: 2000, "text")
-    try length(request.catalogueNumber, max: 64, "catalogueNumber")
-    if let year = request.year, !(1800...2100).contains(year) { throw Failure(field: "year") }
-    try subtype(request.subtype)
-    try region(request.region)
-    if let limit = request.limit, !(1...10).contains(limit) { throw Failure(field: "limit") }
-    let hasQuery = [request.title, request.text, request.catalogueNumber].contains { value in
-      guard let value else { return false }
-      return !value.allSatisfy(\.isWhitespace)
+  /// The hints' limits, and, when they're the whole body (`requireQuery`), the "at least one of" rule: a title, OCR
+  /// text, a catalogue number or a barcode (D-33 in tegola, D-71). Beside a photo, empty hints are fine.
+  static func identify(_ hints: Components.Schemas.IdentifyHints, requireQuery: Bool) throws(Failure) {
+    try length(hints.title, max: 300, "title")
+    try length(hints.subtitle, max: 300, "subtitle")
+    try length(hints.text, max: 2000, "text")
+    try length(hints.catalogueNumber, max: 64, "catalogueNumber")
+    if let barcode = hints.barcode {
+      guard barcode.code.wholeMatch(of: /[0-9A-Za-z-]{6,32}/) != nil else { throw Failure(field: "barcode") }
     }
-    guard hasQuery else { throw Failure(field: "title") }
+    if let year = hints.year, !(1800...2100).contains(year) { throw Failure(field: "year") }
+    try subtype(hints.subtype)
+    try region(hints.region)
+    if let limit = hints.limit, !(1...10).contains(limit) { throw Failure(field: "limit") }
+    guard requireQuery else { return }
+    guard hasQuery(hints) else { throw Failure(field: "title") }
+  }
+
+  /// Whether the hints hold something to look up: words that aren't all blank, or a barcode.
+  static func hasQuery(_ hints: Components.Schemas.IdentifyHints) -> Bool {
+    hints.barcode != nil
+      || [hints.title, hints.text, hints.catalogueNumber].contains { value in
+        guard let value else { return false }
+        return !value.allSatisfy(\.isWhitespace)
+      }
+  }
+
+  /// A JPEG starts with an SOI marker followed by another marker (`FF D8 FF`). The part's declared type isn't
+  /// trusted on its own.
+  static func isJPEG(_ bytes: [UInt8]) -> Bool {
+    bytes.count >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF
   }
 
   /// `maxItems` is checked by the caller (413, as the contract says); this checks everything else.

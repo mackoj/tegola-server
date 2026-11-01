@@ -21,8 +21,9 @@ swift-openapi-runtime sources at the resolved versions.
 **In.** The seven operations of the contract, App Attest registration and verification, the security controls of §5,
 the lookup sources behind them (§4), and what it takes to run one instance in production (§6).
 
-**Out, by tegola's decisions.** Accounts, sync, subscriptions, a cover-art CDN (tegola D-25, Q3/Q9); photos or anything
-about the rest of a shelf (tegola PLAN §2.7). The server never decides for the collector: it proposes candidates with
+**Out, by tegola's decisions.** Accounts, sync, subscriptions, a cover-art CDN (tegola D-25, Q3/Q9); anything about the rest
+of a shelf (tegola PLAN §2.7). A photo arrives only through `identifyObject`, when the collector turns Identify on
+for that shot, and is never kept (tegola D-71, D-24 here). The server never decides for the collector: it proposes candidates with
 `reasons` and `confidence`, and the app writes nothing until the collector agrees.
 
 **Out, for now.** A Discogs account import (OAuth) arrives as a contract change from tegola when that importer is
@@ -60,8 +61,8 @@ in tegola (with `scripts/lint-api.sh` there), then `scripts/sync-contract.sh` he
 compiler asks for. `scripts/ci.sh` fails while the two differ.
 
 What the generator enforces: types, required fields, enums, unknown keys under `additionalProperties: false`. What it
-doesn't, and `Validation` does: `pattern`, `maxLength`, `minimum`/`maximum`, `maxItems`, and SearchRequest's
-"at least one of" (D-11).
+doesn't, and `Validation` does: `pattern`, `maxLength`, `minimum`/`maximum`, `maxItems`, and IdentifyHints's
+"at least one of" (D-11, D-24); for an identify photo, its size and its JPEG signature (D-24).
 
 ## 4. Sources (milestones 3+)
 
@@ -106,7 +107,7 @@ volumetric abuse; a curious operator reading logs.
 | Concurrent replays across instances | One conditional `UPDATE … WHERE counter < $new`: exactly one passes | `PostgresStore.advanceCounter` |
 | A database outage read as "no key" or "replay" | A store that can't answer is 503 with `Retry-After`, never 401 or a pass; `/health` says `degraded` | `AppAttestMiddleware`, `LookupAPI`, D-17 |
 | Database exposure | Internal-only network, no published port, `scram-sha-256`; outside the stack, `verify-full` TLS by default; parameterised statements; the password never printed | `docker-compose.yml`, `DatabaseSettings`, `PostgresStore` |
-| Oversized or hostile bodies | `Content-Length` rejected at the edge, body read with a cap (413), strict CBOR with bounded lengths and depth, unknown JSON keys refused, every limit validated | `EdgeMiddleware`, `AppAttestMiddleware`, `CBORReader`, `Validation` |
+| Oversized or hostile bodies | `Content-Length` rejected at the edge, body read with a cap (413; identify's 3 MiB read only once the key is known, D-24), strict CBOR with bounded lengths and depth, unknown JSON keys refused, every limit validated | `EdgeMiddleware`, `AppAttestMiddleware`, `CBORReader`, `Validation` |
 | Volumetric abuse, quota draining | Token buckets per IP, per key, and a stricter one for registration; bounded tables; idle timeout | `RateLimiter`, `EdgeMiddleware` |
 | Spoofed client address | `X-Forwarded-For` ignored unless `TEGOLA_TRUSTED_PROXY_HOPS`; then only the trusted hop counts | `EdgeMiddleware.clientAddress` |
 | Information leaks in errors | Problem documents with fixed titles; decoder errors become a bare 400; unexpected errors a bare 500 | `ProblemKind`, `EdgeMiddleware.problem` |

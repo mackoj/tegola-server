@@ -8,7 +8,9 @@ package protocol LookupService: Sendable {
   /// Type ids with at least one source.
   var supportedTypes: [String] { get }
   func barcode(_ query: BarcodeQuery) async throws -> [Components.Schemas.Candidate]
-  func search(typeID: String, _ request: Components.Schemas.SearchRequest) async throws
+  /// `identifyObject`'s hints: words, OCR text, a catalogue number, a barcode. A photo never reaches a
+  /// `LookupService`: no source matches images yet, so the handler checks it and drops it (D-24).
+  func identify(typeID: String, _ hints: Components.Schemas.IdentifyHints) async throws
     -> [Components.Schemas.Candidate]
   func match(typeID: String, _ item: Components.Schemas.MatchItem) async throws -> [Components.Schemas.Candidate]
   func work(id: String) async throws -> Components.Schemas.Work?
@@ -38,7 +40,7 @@ package struct NoSourcesLookupService: LookupService {
 
   package func barcode(_ query: BarcodeQuery) async throws -> [Components.Schemas.Candidate] { [] }
 
-  package func search(typeID: String, _ request: Components.Schemas.SearchRequest) async throws
+  package func identify(typeID: String, _ hints: Components.Schemas.IdentifyHints) async throws
     -> [Components.Schemas.Candidate]
   { [] }
 

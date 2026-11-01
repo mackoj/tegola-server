@@ -3,14 +3,15 @@
 The state of the work for whoever picks it up next: a new session, another agent, or the owner. Read this first, keep
 it short and current.
 
-**Updated:** 2026-11-01. M1, M2, D-19 to D-21 are merged (PRs #1–#12). **M3 (suppliers) is done** on
-`claude/tegola-hummingbird-bff-9ad714`: four suppliers, each described by an OpenAPI file with a generated client,
-behind one `DataSupplier` protocol (D-22, D-23). Two separate reviews ran, and every finding is fixed with a test
-(`tasks/M3-review.md`). Report: `docs/milestones/M3.md`.
+**Updated:** 2026-11-01. M1 to M3 are merged (PRs #1–#13). **Contract 0.2.0** (tegola D-71) is synced on
+`claude/tegola-hummingbird-bff-9ad714`: `identifyObject` (`POST /types/{type}/identify`, JSON hints or a multipart
+photo and hints) replaces `searchObjects` (D-24). The photo is size-checked, JPEG-checked and dropped: no source
+matches images yet.
 
 ## Resume here (in this order)
 
-1. **M3's PR**, if it isn't merged yet: green `linux` and `docker`, then merge.
+1. **Contract 0.2.0's PR** (this branch), if it isn't merged yet: green `linux` and `docker`, then merge. tegola's
+   HANDOFF says the server must sync 0.2.0; once merged, that line there can go.
 2. **Owner, keys:** register the suppliers' keys (`deploy/env.example`, "Lookup sources"): a MusicBrainz contact, a
    Twitch application for IGDB, a ScreenScraper developer account, a BoardGameGeek XML API token. Then, with the
    keys, re-record `Tests/TegolaServerTests/SupplierFixtures.swift` from the live APIs: they're hand-written from the
@@ -31,6 +32,7 @@ behind one `DataSupplier` protocol (D-22, D-23). Two separate reviews ran, and e
    sources are answered, D-17, D-22). `docs/DEPLOY.md` says where each answer goes.
 6. **M4, production**, paced by tegola's M6 (the app's lookup client).
 7. **Open options:**
+   - an image source for Identify, per type (D-24 says where it plugs in, and what PD-118 asks of it);
    - cover art for music (Cover Art Archive);
    - a supplier cache and rate limits shared by several instances (D-9);
    - an import batch that answers the rows it reached instead of 503 (a contract change, tegola first);
@@ -43,7 +45,7 @@ update.
 
 ## Where things stand
 
-- **Spec:** `docs/PLAN.md`; decisions D-1 to D-23 in `docs/DECISIONS.md`.
+- **Spec:** `docs/PLAN.md`; decisions D-1 to D-24 in `docs/DECISIONS.md`.
 - **M1 (foundation):** the contract's seven operations served by Hummingbird 2 from generated code. App Attest
   registration and assertions are verified end to end, with every control of PLAN §5 and no lookup source yet (D-12).
   Report: `docs/milestones/M1.md`.

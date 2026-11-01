@@ -12,7 +12,7 @@ The app generates its client from that file; this server generates its routes an
 | Endpoint | Auth | What it does |
 |---|---|---|
 | `GET /v1/types/{type}/barcodes/{code}` | App Attest | Candidates for a barcode, best first; publicly cacheable |
-| `POST /v1/types/{type}/search` | App Attest | Candidates for a title, OCR text or catalogue number |
+| `POST /v1/types/{type}/identify` | App Attest | Candidates for words, OCR text, a catalogue number, a barcode and a photo, in any combination |
 | `POST /v1/types/{type}/match` | App Attest | Up to 50 import rows → matched, ambiguous or unknown |
 | `GET /v1/works/{id}` | App Attest | A work and its releases |
 | `GET /v1/app-attest/challenge` | none | A single-use challenge for registering a key |
@@ -33,7 +33,7 @@ genuine Apple device (PLAN §5).
   path-with-query, timestamp and body hash. The server checks the signature, that the counter strictly increased (one
   use per assertion) and that the timestamp is within 5 minutes.
 - **Production refuses debug tokens**, in its configuration and on the wire (403 to any request carrying one).
-- **Limits** before any work: body cap (256 KiB, 413), per-IP and per-key token buckets (429 with `Retry-After`), a
+- **Limits** before any work: body cap (256 KiB, 3 MiB for identify's photo; 413), per-IP and per-key token buckets (429 with `Retry-After`), a
   stricter bucket for registration, idle-connection timeout, bounded in-memory tables.
 - **Validation** of every pattern, length and range in the contract, unknown JSON keys refused.
 - **Errors** are RFC 9457 problem documents with fixed titles: nothing internal, nothing echoed.

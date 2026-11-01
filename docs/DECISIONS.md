@@ -417,3 +417,31 @@ that is from our data supplier", and "one protocol that will represent any data 
 - **BGG:** answers must be UTF-8 without NULs before the declaration check.
 - **Twitch:** a fresh token IGDB refuses isn't fetched again.
 - **MusicBrainz:** the year and subtype rank and filter locally instead of in its index.
+
+### D-24 · Identify replaces search (contract 0.2.0)
+
+**Direction.** tegola's D-71 (2026-11-01): `identifyObject` (`POST /types/{typeID}/identify`) replaces
+`searchObjects`, and takes words, OCR text, a barcode and a photo in any combination. PD-118: a photo leaves the phone
+only through Identify, and the server never keeps it.
+
+**Decision.**
+- **Two bodies.** JSON is the hints alone, and needs a title, OCR text, a catalogue number or a barcode (`400`
+  otherwise). `multipart/form-data` carries an `image` part (a JPEG) and a `hints` part (the same JSON), each at most
+  once; at least one of a photo, a hint or a barcode must be there.
+- **The photo is checked, then dropped.** At most 2 MiB (`413`), and it must start with a JPEG's `FF D8 FF`, whatever
+  its part says (`415`). No source matches images yet, so the bytes never leave the handler: no `LookupService`,
+  supplier, cache or log sees them. A photo with no usable hint answers `200` with no candidates, which the contract
+  defines as "no match". An image source, when one is chosen, gets its own parameter on `LookupService.identify` and
+  must keep PD-118 (no storage, no source that keeps it).
+- **Hints:** the words go to every supplier of the type (as `searchObjects` did), the barcode to the suppliers with a
+  barcode index (as `lookupBarcode` does), both at once. A release both find is one candidate with the higher
+  confidence and both reasons. One half failing doesn't hide what the other found; with nothing found and a failure,
+  it's `503`, as before.
+- **Body caps per operation.** `identifyObject` may send 3 MiB (`Limits.maximumIdentifyBodyBytes`); every other
+  operation keeps 256 KiB. The edge refuses a declared length above the larger cap before the route is known;
+  `AppAttestMiddleware` applies the operation's own. Caddy's `max_size` is 3 MiB.
+- **Headers before body.** A secured operation's key id, timestamp and key (known, not revoked, right environment)
+  are checked before its body is read, so a caller without a registered key can't make the server read 3 MiB. The
+  assertion, which covers the body, is checked after. A secured request that's both unsigned and too large is now
+  `401`, not `413`.
+
