@@ -3,23 +3,20 @@
 The state of the work for whoever picks it up next: a new session, another agent, or the owner. Read this first, keep
 it short and current.
 
-**Updated:** 2026-11-01. M1, M2 and the review's fixes (D-19) are merged (PRs #1–#5). Images and actions are now
-pinned (D-20), and Postgres 18 works (D-21), on `claude/tegola-hummingbird-bff-9ad714`, open as PR #11.
-`main` has been red (`docker` job) since Dependabot's Postgres 18 bump (#8) merged; PR #11 fixes it.
+**Updated:** 2026-11-01. M1, M2, the review's fixes (D-19), pinning (D-20) and Postgres 18 (D-21) are merged (PRs
+#1–#11). `main` is green (CI run 39), and no PR is open. Nothing more moves without the owner's answers (item 2).
 
 ## Resume here (in this order)
 
-1. **tegola-server PR #11** (this branch): pinning (D-20) and Postgres 18 (D-21). If its `linux` and `docker` jobs
-   are green, merge it.
-2. **Dependabot PRs**, weekly: merge one only once both `linux` and `docker` are green (the `docker` job takes about
+1. **Dependabot PRs**, weekly: merge one only once both `linux` and `docker` are green (the `docker` job takes about
    ten minutes; #8 was merged before it failed). An image bump that touches the Dockerfile's `swift` or Compose's
    `postgres` fails `pins` until CI's copy in `.github/workflows/ci.yml` carries the same digest: move it in the same
    PR. A Postgres major bump needs the upgrade step in D-21 once a deployment exists.
-3. **Owner answers**, deferred until release: sources per type, hosting and domain, Team ID, shared caches (PLAN §9;
+2. **Owner answers**, deferred until release: sources per type, hosting and domain, Team ID, shared caches (PLAN §9;
    persistence is answered: Postgres, D-17). `docs/DEPLOY.md` says where each answer goes.
-4. **M3, sources** (once the owner picks them): one per launch type behind `LookupService`, with recorded-response
+3. **M3, sources** (once the owner picks them): one per launch type behind `LookupService`, with recorded-response
    tests. `matchBatch` already charges one token per row (D-19).
-5. **M4, production**, paced by tegola's M6 (the app's lookup client).
+4. **M4, production**, paced by tegola's M6 (the app's lookup client).
 
 The owner's working style: carry on without asking. Use a worktree per task, branch, commit, push, open the PR, wait
 for green CI, merge. Stop only for decisions that are the owner's (PLAN §9). To keep the PR description free of the
