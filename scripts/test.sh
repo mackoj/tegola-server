@@ -4,7 +4,7 @@
 #   scripts/test.sh SecurityTests        # one suite or test (swift test --filter)
 # The store tests also run against Postgres when TEGOLA_TEST_DATABASE_URL is set (CI's service; locally, e.g.
 #   docker run -d -p 127.0.0.1:55432:5432 -e POSTGRES_USER=tegola -e POSTGRES_PASSWORD=t -e POSTGRES_DB=tegola_test \
-#     postgres:17-alpine
+#     postgres:18-alpine
 #   TEGOLA_TEST_DATABASE_URL='postgres://tegola:t@127.0.0.1:55432/tegola_test?sslmode=disable' scripts/test.sh).
 # Writes build/test-summary.md. On the Mac it uses Xcode's toolchain (xcrun), never swiftly's; elsewhere `swift` on
 # PATH (Linux CI, a cloud session through scripts/cloud-toolchain.sh).

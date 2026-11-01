@@ -40,11 +40,12 @@ check "refuses a debug token in production (exit 78)" "78" "$?"
 docker run --rm -e TEGOLA_APP_ID=$APP_ID "$IMAGE" > /dev/null 2>&1
 check "refuses production without TEGOLA_DATABASE_URL (exit 78)" "78" "$?"
 
-# Production needs a database: a throwaway Postgres on a private network.
+# Production needs a database: a throwaway Postgres on a private network, the image Compose pins (D-20).
+PG_IMAGE=$(awk '$1 == "image:" && $2 ~ /^postgres:/ {print $2; exit}' docker-compose.yml)
 net=tegola-smoke-$$
 docker network create "$net" > /dev/null
 db=$(docker run -d --network "$net" --network-alias postgres -e POSTGRES_USER=tegola -e POSTGRES_DB=tegola \
-  -e POSTGRES_PASSWORD=smoke postgres:17-alpine)
+  -e POSTGRES_PASSWORD=smoke "$PG_IMAGE")
 for _ in $(seq 1 30); do docker exec "$db" pg_isready -U tegola -q 2> /dev/null && break; sleep 1; done
 cid=$(docker run -d --network "$net" --read-only --cap-drop ALL --security-opt no-new-privileges \
   -p 127.0.0.1:18080:8080 -e TEGOLA_APP_ID=$APP_ID \
@@ -90,11 +91,10 @@ if [[ "${1:-}" != "image" ]]; then
     check "stack: nothing outside /v1" "404" "$(https -o /dev/null -w '%{http_code}' https://localhost/admin)"
     check "stack: HTTP redirects to HTTPS" "308" \
       "$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' http://127.0.0.1/v1/health -H 'Host: localhost')"
-    # `compose port` prints ":0" for a port that isn't published.
-    published=$(compose port tegola-server 8080 2>/dev/null)
-    check "stack: server port not published" "" "${published#:0}"
-    published=$(compose port postgres 5432 2>/dev/null)
-    check "stack: Postgres port not published" "" "${published#:0}"
+    # `docker port` prints one line per host binding, nothing for a port that isn't published. (`compose port`'s
+    # answer for an unpublished port changed between Compose versions: ":0", then "invalid IP:0".)
+    check "stack: server port not published" "" "$(docker port "$(compose ps -q tegola-server)" 8080 2>/dev/null)"
+    check "stack: Postgres port not published" "" "$(docker port "$(compose ps -q postgres)" 5432 2>/dev/null)"
     check "stack: schema migrated" "1" \
       "$(compose exec -T postgres sh -c 'PGPASSWORD=$POSTGRES_PASSWORD psql -h 127.0.0.1 -U tegola -d tegola -tAc \
         "SELECT max(version) FROM tegola_schema_migrations"' 2>/dev/null)"
@@ -110,6 +110,15 @@ if [[ "${1:-}" != "image" ]]; then
     done
     check "stack: healthy again after a server restart" "200" \
       "$(https -o /dev/null -w '%{http_code}' https://localhost/v1/health)"
+    # The data lives in the named volume: after `down` and `up` (new containers, new anonymous volumes) it's still
+    # there (D-21).
+    compose exec -T postgres sh -c 'PGPASSWORD=$POSTGRES_PASSWORD psql -h 127.0.0.1 -U tegola -d tegola -qc \
+      "CREATE TABLE smoke_persistence (x int)"' > /dev/null 2>&1
+    compose down > /dev/null 2>&1
+    compose up -d --wait > /dev/null 2>&1
+    check "stack: data survives down and up" "1" \
+      "$(compose exec -T postgres sh -c 'PGPASSWORD=$POSTGRES_PASSWORD psql -h 127.0.0.1 -U tegola -d tegola -tAc \
+        "SELECT count(*) FROM pg_tables WHERE tablename = \$\$smoke_persistence\$\$"' 2>/dev/null)"
   else
     echo "- ❌ stack: compose up failed, see build/docker-compose.log" >> "$SUMMARY"; STATUS=1
   fi

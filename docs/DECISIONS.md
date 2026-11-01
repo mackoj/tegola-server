@@ -270,5 +270,42 @@ critical or high. Every finding is fixed here, except the two listed under "Left
   - `docker-smoke.sh`: a wrong database password exits 1 with the reason in the log and never the password.
 - **Dependabot** now watches the GitHub Actions, the Dockerfile and Compose images, and the Swift packages.
 
-**Left open.** Pinning actions and images by SHA or digest instead of tag: Dependabot keeps the tags current, and
-pinning is a decision to take with the hosting. Shared rate limits for several instances (D-9).
+**Left open.** Pinning actions and images by SHA or digest instead of tag (since done: D-20). Shared rate limits for
+several instances (D-9).
+
+### D-20 · Everything the build pulls is pinned
+
+**Gap.** D-19 left the images and actions on tags. A tag can be moved: the same Dockerfile could build on a different
+base tomorrow, and a re-pointed action tag would run with the job's token. Nothing about it depends on the host, so it
+needn't wait for PLAN §9.
+
+**Decision.** Each image is written `tag@sha256:<index digest>` (the multi-arch index, so the Mac and amd64 both
+resolve), and each action `owner/action@<commit SHA> # vX.Y.Z`. This covers the Dockerfile's two stages, the Compose
+images (Postgres, Caddy) and CI's own (the `swift` container, the Postgres service), and `docker-smoke.sh` takes its
+Postgres from `docker-compose.yml`. The tag stays for people and for Dependabot, which bumps tag and digest (or SHA and
+comment) together in one PR that CI must pass. The digests were read from Docker Hub and from `mirror.gcr.io`, and
+matched.
+
+`scripts/pin-check.sh`, in `scripts/ci.sh`, fails on an unpinned image or action, and on one image carrying two
+digests across files. Dependabot doesn't update a workflow's `container:` and `services:` images, so a bump of the
+Dockerfile's `swift` or Compose's `postgres` fails that check until CI's copy is moved too, in the same PR. That keeps
+CI testing on the image that ships.
+
+### D-21 · Postgres 18, and its new data path
+
+**Gap.** Dependabot's PR #8 moved Compose from `postgres:17-alpine` to `18-alpine`, and it was merged before the
+`docker` job finished. From 18 the image keeps its data in `/var/lib/postgresql/18/docker` (`PGDATA`) and refuses to
+start while a volume is mounted on the old `/var/lib/postgresql/data`, which is where Compose mounted `postgres_data`.
+The stack never became healthy, and `main`'s `docker` job was red from that merge on. CI's own Postgres service and
+`scripts/test.sh` stayed on 17, so the gate tested one major version and the stack shipped another.
+
+**Decision.** Postgres 18 everywhere: Compose, CI's service and the smoke test, all on one digest (D-20's check now
+refuses the split). `postgres_data` is mounted on `/var/lib/postgresql`, the parent of every major's directory, as the
+image expects. `docker-smoke.sh` now writes a table, takes the stack `down` and `up` again (new containers, new
+anonymous volumes), and checks the table is still there. Data that lands outside the named volume fails the smoke
+test instead of disappearing on the next update. A plain `--force-recreate` wouldn't show it: Compose carries a
+container's anonymous volumes over to its replacement. The
+store tests pass on 18.6.
+
+**Upgrading a deployment.** None runs yet. A stack that ran 17 has its data in `postgres_data/` at the old layout:
+dump it with 17 (`pg_dumpall`), start 18 on a fresh volume, restore. The server migrates its schema at start (D-17).
