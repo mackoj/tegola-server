@@ -3,19 +3,24 @@
 The state of the work for whoever picks it up next: a new session, another agent, or the owner. Read this first, keep
 it short and current.
 
-**Updated:** 2026-11-01. M1 to M3 are merged (PRs #1–#13), and so is **contract 0.2.0** (tegola D-71, PR #14):
-`identifyObject` (`POST /types/{type}/identify`, JSON hints or a multipart photo and hints) replaces `searchObjects`
-(D-24). The photo is size-checked, JPEG-checked and dropped: no source matches images yet. Music candidates now
-carry their Cover Art Archive front, when MusicBrainz says there is one (D-25). **Wikidata** is a supplier now
-(D-26): primary for `thing`, and the fallback for the other types, asked only when their own sources find
-nothing. tegola's M5 and M6 are merged, so the app's lookup client exists: M4's end-to-end run waits only on a host
-and a device.
+**Updated:** 2026-11-01. M1 to M3 are merged, and so are contract 0.2.0 (D-24), music cover art (D-25) and
+Wikidata with tiers (D-26). **M5 · providers** has started from the owner's "Data Providers" proposal
+(`docs/proposals/data-providers.dc.html`), adopted with changes (D-27): T5.1 and T5.2 are done on this branch.
+Providers now return `ProviderRecord`s, and `LookupRouter` ranks them one way and merges records of one release from
+several providers. "Supplier" is "provider" in the code. tegola's M5 and M6 are merged, so the app's lookup client
+exists: M4's end-to-end run waits only on a host and a device.
 
 ## Resume here (in this order)
 
-1. **Owner, keys:** register the suppliers' keys (`deploy/env.example`, "Lookup sources"): a MusicBrainz contact, a
+1. **M5, next task: T5.3 manifests** (`tasks/plan.md`, M5; D-27 says what changed from the proposal and why). Then
+   T5.4 caches by licence, T5.5 ledger, budget and kill switch. The owner's answers: keep the cost data and group it
+   later; assume some sources will be paid; one repo.
+2. **Owner: tegola D-76** (merged, PR #19): the proposal's product half, recorded for the owner to decide: free-tier
+   caps, type packs, a subscription (sections 05–06), and the ledger's per-install pseudonym. It conflicts with
+   tegola D-25 and ADR-0001.
+3. **Owner, keys:** register the providers' keys (`deploy/env.example`, "Lookup sources"): a MusicBrainz contact, a
    Twitch application for IGDB, a ScreenScraper developer account, a BoardGameGeek XML API token. Then, with the
-   keys, re-record `Tests/TegolaServerTests/SupplierFixtures.swift` from the live APIs: they're hand-written from the
+   keys, re-record `Tests/TegolaServerTests/ProviderFixtures.swift` from the live APIs: they're hand-written from the
    documented formats, since this sandbox can't reach the providers. Check in particular:
    - each answer's Content-Type (the generated clients refuse undeclared ones, D-23);
    - IGDB's `release_region`;
@@ -23,22 +28,25 @@ and a device.
    - Wikidata's answers (no key, only `TEGOLA_WIKIDATA_CONTACT`), and whether its classes and weights suit (D-26);
    - ScreenScraper's system ids;
    - BGG's bearer token.
-2. **Adding a supplier:** write (or fetch) its description in `api/sources/`, add a `<Name>API` target in
-   `Package.swift` (copy an existing one), and conform a type to `DataSupplier` in `Sources/TegolaServer/Suppliers/`.
-   Then wire it in `SupplierFactory.swift` and `SourceSettings`, and add tests with fixtures that carry the real
-   Content-Type. A general source that should only answer when the type's own find nothing sets `tier: .fallback`
-   (D-26).
-3. **Dependabot PRs**, weekly: merge one only once both `linux` and `docker` are green (the `docker` job takes about
+   - whether IGDB's and ScreenScraper's titles, regions and years agree often enough to merge (D-27).
+4. **Adding a provider:** write (or fetch) its description in `api/sources/`, add a `<Name>API` target in
+   `Package.swift` (copy an existing one), and conform a type to `DataProvider` in `Sources/TegolaServer/Providers/`.
+   It returns `ProviderRecord`s: fill the type file's field keys, the external ids (its own included), `identifying`
+   for those that name the release itself (not its game or work), and `matched` for what it matched exactly; never a
+   confidence (D-27). Then wire it in `ProviderFactory.swift` and
+   `SourceSettings`, and add tests with fixtures that carry the real Content-Type. A general source that should only
+   answer when the type's own find nothing sets `tier: .fallback` (D-26), and `weights` when its matches are looser.
+5. **Dependabot PRs**, weekly: merge one only once both `linux` and `docker` are green (the `docker` job takes about
    ten minutes; #8 was merged before it failed). An image bump that touches the Dockerfile's `swift` or Compose's
    `postgres` fails `pins` until CI's copy in `.github/workflows/ci.yml` carries the same digest: move it in the same
    PR. A Postgres major bump needs the upgrade step in D-21 once a deployment exists.
-4. **Owner answers**, deferred until release: hosting and domain, Team ID, shared caches (PLAN §9; persistence and
+6. **Owner answers**, deferred until release: hosting and domain, Team ID, shared caches (PLAN §9; persistence and
    sources are answered, D-17, D-22). `docs/DEPLOY.md` says where each answer goes.
-5. **M4, production**: tegola's M6 (the app's lookup client) is merged; what remains needs the owner's host, domain
+7. **M4, production**: tegola's M6 (the app's lookup client) is merged; what remains needs the owner's host, domain
    and a device (`tasks/plan.md`, M4).
-6. **Open options:**
-   - an image source for Identify, per type (D-24 says where it plugs in, and what PD-118 asks of it);
-   - a supplier cache and rate limits shared by several instances (D-9);
+8. **Open options:**
+   - an image source for Identify, per type (D-24 says where it plugs in, and what PD-118 asks of it; T5.6);
+   - a provider cache and rate limits shared by several instances (D-9; the cache part is T5.4);
    - an import batch that answers the rows it reached instead of 503 (a contract change, tegola first);
    - a range for `MatchItem.year` in the contract (the server drops out-of-range years today).
 
@@ -49,17 +57,20 @@ update.
 
 ## Where things stand
 
-- **Spec:** `docs/PLAN.md`; decisions D-1 to D-26 in `docs/DECISIONS.md`.
+- **Spec:** `docs/PLAN.md`; decisions D-1 to D-27 in `docs/DECISIONS.md`.
+- **M5 (providers, in progress):** D-27. Providers return `ProviderRecord`s; `Ranking` scores them (D-22's formula
+  times `ProviderWeights`); `RecordMerge` makes one candidate of records that share a release-level external id
+  (`identifying`) or agree on type, title, subtype, region and year, one to one. Tests: `RecordMergeTests.swift`.
 - **M1 (foundation):** the contract's seven operations served by Hummingbird 2 from generated code. App Attest
   registration and assertions are verified end to end, with every control of PLAN §5 and no lookup source yet (D-12).
   Report: `docs/milestones/M1.md`.
-- **M3 (suppliers):** MusicBrainz (music: barcode and words), IGDB + ScreenScraper (video games: words),
+- **M3 (sources):** MusicBrainz (music: barcode and words), IGDB + ScreenScraper (video games: words),
   BoardGameGeek (board games: words); the owner's choice (D-22). Wikidata (barcode and words) for `thing`, and as the
   other types' fallback tier (D-26). Each is described in
-  `api/sources/*.openapi.yaml` with a generated client (`Sources/<Name>API/`), conforms to `DataSupplier`
-  (`Sources/TegolaServer/Suppliers/`), and turns on with its environment variables. All clients send through
-  `SupplierTransport`, which applies pace, breaker, timeout, size cap and no redirects (D-23). Tests:
-  `SupplierTests.swift`, with fixtures in `SupplierFixtures.swift`.
+  `api/sources/*.openapi.yaml` with a generated client (`Sources/<Name>API/`), conforms to `DataProvider`
+  (`Sources/TegolaServer/Providers/`), and turns on with its environment variables. All clients send through
+  `ProviderTransport`, which applies pace, breaker, timeout, size cap and no redirects (D-23). Tests:
+  `ProviderTests.swift`, with fixtures in `ProviderFixtures.swift`.
 - **M2 (persistence):** keys and challenges in Postgres (`PostgresStore`), required in production. The Compose stack
   runs Postgres on an internal-only network. Report: `docs/milestones/M2.md`.
 - **Review (D-19):**
@@ -113,6 +124,10 @@ TEGOLA_ENVIRONMENT=development TEGOLA_APP_ID=ABCDE12345.fr.macko.tegola \
   the compiler lists what to implement. Never edit `api/` here alone.
 - **Generated code** is in `.build/plugins/outputs/…/OpenAPIGenerator/GeneratedSources/` after a build: read
   `Types+Operations.swift` for the shapes a handler returns.
+- **Gotchas found in M5:** the router drops a record whose `provider` or `typeID` isn't the provider's own, so a
+  test provider's records must carry its name (the tests' `record("<name>:<n>")` does). A candidate's confidence now
+  comes from the router: test a provider's ranking through `candidates(_:)` (`ProviderTests.swift`), which scores its
+  records as the router does.
 - **Gotchas found in M3:**
   - swift-openapi-generator takes one document per target, so each supplier has its own target.
   - Every module generates its own `Components`, `Operations` and `Client`: qualify them by module

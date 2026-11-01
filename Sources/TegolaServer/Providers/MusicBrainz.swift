@@ -6,10 +6,10 @@ import OpenAPIRuntime
 /// barcode and words, no key. MusicBrainz asks for a User-Agent naming the application and a contact, and at most
 /// one request a second; the connection's pacer keeps to it. Its data is CC0.
 /// Releases are `musicbrainz:release:<mbid>`, works are `musicbrainz:release-group:<mbid>`.
-struct MusicBrainzSupplier: DataSupplier {
+struct MusicBrainzProvider: DataProvider {
   typealias Release = MusicBrainzAPI.Components.Schemas.Release
 
-  let connection: SupplierConnection
+  let connection: ProviderConnection
   let client: MusicBrainzAPI.Client
 
   let name = "musicbrainz"
@@ -27,16 +27,16 @@ struct MusicBrainzSupplier: DataSupplier {
     attribution: "Data from MusicBrainz (CC0)"
   )
 
-  init(connection: SupplierConnection, userAgent: String) {
+  init(connection: ProviderConnection, userAgent: String) {
     self.connection = connection
     self.client = MusicBrainzAPI.Client(
       serverURL: try! MusicBrainzAPI.Servers.Server1.url(),
-      transport: SupplierTransport(connection: connection),
+      transport: ProviderTransport(connection: connection),
       middlewares: [HeadersMiddleware { ["User-Agent": userAgent] }]
     )
   }
 
-  func barcode(_ query: BarcodeQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] {
+  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [ProviderRecord] {
     let code = query.code.filter(\.isNumber)
     guard !code.isEmpty else { return [] }
     let releases = try await releases(.init(query: "barcode:\(code)", fmt: .json, limit: 10))
@@ -44,19 +44,19 @@ struct MusicBrainzSupplier: DataSupplier {
       // The index matches loosely; only an exact barcode counts as a barcode match.
       guard release.barcode?.filter(\.isNumber) == code else { return nil }
       if let subtype = query.subtype, Self.subtype(release) != subtype { return nil }
-      return candidate(release, confidence: 0.95, reasons: [.init(kind: .barcode)])
+      return record(release)
     }
   }
 
-  func search(_ query: SupplierQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] {
+  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [ProviderRecord] {
     var clauses: [String] = []
     if !query.title.isEmpty { clauses.append("release:(\(Self.escape(query.title)))") }
     if let artist = query.subtitle, !artist.isEmpty { clauses.append("artist:(\(Self.escape(artist)))") }
     if let catalogueNumber = query.catalogueNumber, !catalogueNumber.isEmpty {
       clauses.append("catno:\"\(Self.escape(catalogueNumber))\"")
     }
-    // The year ranks and the subtype filters here, not in the index: MusicBrainz's `date` and `format` fields don't
-    // match a bare year or medium reliably, and a filter that misses reads as "no match".
+    // The year ranks (in the router) and the subtype filters here, not in the index: MusicBrainz's `date` and
+    // `format` fields don't match a bare year or medium reliably, and a filter that misses reads as "no match".
     guard !clauses.isEmpty else { return [] }
     let releases = try await releases(
       .init(
@@ -67,35 +67,21 @@ struct MusicBrainzSupplier: DataSupplier {
     )
     return releases.compactMap { release in
       if let subtype = query.subtype, Self.subtype(release) != subtype { return nil }
-      let year = TextMatch.year(release.date)
-      var reasons: [Components.Schemas.Reason] = [.init(kind: query.reason)]
-      var confidence: Double
-      if query.title.isEmpty {
-        // A catalogue number alone: MusicBrainz's own score is all we have.
-        confidence = Double(min(max(release.score ?? 0, 0), 100)) / 100 * 0.9
-      } else {
-        confidence = TextMatch.confidence(
-          title: query.title,
-          candidateTitle: release.title,
-          subtitle: query.subtitle,
-          candidateSubtitle: Self.artist(release),
-          year: query.year,
-          candidateYear: year
-        )
-      }
+      guard var record = record(release) else { return nil }
+      // MusicBrainz's own score, for a catalogue number alone, when there are no words to compare.
+      record.relevance = Double(min(max(release.score ?? 0, 0), 100)) / 100
       if let catalogueNumber = query.catalogueNumber,
         release.labelInfo?.contains(where: {
           $0.catalogNumber.map(TextMatch.normalise) == TextMatch.normalise(catalogueNumber)
         }) == true
       {
-        reasons.append(.init(kind: .catalogueNumber))
-        confidence = max(confidence, 0.9)
+        record.matched.insert(.catalogueNumber)
       }
-      return candidate(release, confidence: confidence, reasons: reasons)
+      return record
     }
   }
 
-  func work(id: String) async throws(SupplierFailure) -> Components.Schemas.Work? {
+  func work(id: String) async throws(ProviderFailure) -> Components.Schemas.Work? {
     let prefix = "musicbrainz:release-group:"
     guard id.hasPrefix(prefix), let mbid = Self.mbid(String(id.dropFirst(prefix.count))) else { return nil }
     let releases = try await releases(
@@ -121,7 +107,7 @@ struct MusicBrainzSupplier: DataSupplier {
 
   // MARK: - requests
 
-  private func releases(_ query: MusicBrainzAPI.Operations.Releases.Input.Query) async throws(SupplierFailure)
+  private func releases(_ query: MusicBrainzAPI.Operations.Releases.Input.Query) async throws(ProviderFailure)
     -> [Release]
   {
     let output = try await connection.call { try await client.releases(query: query) }
@@ -132,11 +118,7 @@ struct MusicBrainzSupplier: DataSupplier {
     }
   }
 
-  private func candidate(
-    _ release: Release,
-    confidence: Double,
-    reasons: [Components.Schemas.Reason]
-  ) -> Components.Schemas.Candidate? {
+  private func record(_ release: Release) -> ProviderRecord? {
     guard let mbid = Self.mbid(release.id), let title = TextMatch.clean(release.title) else { return nil }
     var fields: [String: Components.Schemas.FieldValue] = [:]
     let medium = Self.medium(release)
@@ -149,7 +131,8 @@ struct MusicBrainzSupplier: DataSupplier {
     if let country = TextMatch.clean(release.country, max: 16) { fields["country"] = .case1(country) }
     var externalIDs = ["musicbrainz": mbid]
     if let group = release.releaseGroup?.id.flatMap(Self.mbid) { externalIDs["musicbrainz-release-group"] = group }
-    return .init(
+    return ProviderRecord(
+      provider: name,
       releaseID: "musicbrainz:release:\(mbid)",
       workID: release.releaseGroup?.id.flatMap(Self.mbid).map { "musicbrainz:release-group:\($0)" },
       typeID: typeID,
@@ -157,12 +140,11 @@ struct MusicBrainzSupplier: DataSupplier {
       title: title,
       subtitle: TextMatch.clean(Self.artist(release)),
       year: TextMatch.year(release.date),
-      fields: .init(additionalProperties: fields),
-      images: Self.images(release, mbid: mbid),
-      confidence: confidence,
-      reasons: reasons,
-      sources: [Self.source],
-      externalIDs: .init(additionalProperties: externalIDs)
+      fields: fields,
+      images: Self.images(release, mbid: mbid) ?? [],
+      externalIDs: externalIDs,
+      identifying: ["musicbrainz"],
+      source: Self.source
     )
   }
 

@@ -6,14 +6,14 @@ func makeLookupService(
   _ settings: SourceSettings,
   transport: any HTTPTransport,
   logger: Logger
-) -> SuppliersLookupService {
+) -> LookupRouter {
   var sourceLogger = logger
   sourceLogger[metadataKey: "component"] = "source"
-  var sources: [any DataSupplier] = []
+  var sources: [any DataProvider] = []
   if let contact = settings.musicBrainzContact {
     sources.append(
-      MusicBrainzSupplier(
-        connection: SupplierConnection(
+      MusicBrainzProvider(
+        connection: ProviderConnection(
           name: "musicbrainz",
           transport: transport,
           interval: .milliseconds(1100),
@@ -25,8 +25,8 @@ func makeLookupService(
   }
   if let igdb = settings.igdb {
     sources.append(
-      IGDBSupplier(
-        connection: SupplierConnection(
+      IGDBProvider(
+        connection: ProviderConnection(
           name: "igdb",
           transport: transport,
           interval: .milliseconds(260),
@@ -35,7 +35,7 @@ func makeLookupService(
         tokens: TwitchTokens(
           clientID: igdb.id,
           clientSecret: igdb.secret,
-          connection: SupplierConnection(
+          connection: ProviderConnection(
             name: "twitch",
             transport: transport,
             interval: .milliseconds(500),
@@ -47,8 +47,8 @@ func makeLookupService(
   }
   if let screenScraper = settings.screenScraper {
     sources.append(
-      ScreenScraperSupplier(
-        connection: SupplierConnection(
+      ScreenScraperProvider(
+        connection: ProviderConnection(
           name: "screenscraper",
           transport: transport,
           interval: .milliseconds(1200),
@@ -65,8 +65,8 @@ func makeLookupService(
   }
   if let token = settings.boardGameGeekToken {
     sources.append(
-      BoardGameGeekSupplier(
-        connection: SupplierConnection(
+      BoardGameGeekProvider(
+        connection: ProviderConnection(
           name: "boardgamegeek",
           transport: transport,
           interval: .seconds(2),
@@ -80,7 +80,7 @@ func makeLookupService(
   if let contact = settings.wikidataContact {
     // One connection for every type's profile: Wikidata sees one client, one request at a time (D-26). Items with
     // their statements are large, hence the bigger cap.
-    let connection = SupplierConnection(
+    let connection = ProviderConnection(
       name: "wikidata",
       transport: transport,
       interval: .milliseconds(500),
@@ -89,9 +89,9 @@ func makeLookupService(
     )
     for profile in WikidataProfile.all {
       sources.append(
-        WikidataSupplier(profile: profile, connection: connection, userAgent: "tegola-server/1.0 ( \(contact) )")
+        WikidataProvider(profile: profile, connection: connection, userAgent: "tegola-server/1.0 ( \(contact) )")
       )
     }
   }
-  return SuppliersLookupService(sources: sources)
+  return LookupRouter(sources: sources)
 }

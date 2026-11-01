@@ -500,3 +500,91 @@ source", with the sources organised to allow it.
 **Left for later.** Images: an item's P18 is a Commons file whose licence often requires attribution per file,
 which `Candidate.images` can't carry. Wikidata as a fallback for types beyond these four (books, comics, LEGO, …),
 which needs only a profile once the app ships them. A language from the request.
+
+### D-27 · Data providers: records and a router (M5)
+
+**Direction.** The owner's proposal, "Data Providers" (November 2026, `docs/proposals/data-providers.dc.html`),
+reviewed on 2026-11-01 and adopted with the changes below. The owner's answers: start with steps 1–2 (this
+decision, then records and the router), and a milestone for the rest (M5, `tasks/plan.md`). For cost per collector,
+"make the data, I will find a way to group it later". Assume some sources will be paid. One repo.
+
+**What was already there.** The proposal's five layers map onto M3's code. The Lookup API is the generated
+Hummingbird server, not Vapor. The router is `SuppliersLookupService` (now `LookupRouter`), with D-26's tiers. The
+DataProvider is `DataSupplier` (now `DataProvider`). Generated clients, one target each, come from D-23. The
+transport and middleware are `SupplierTransport` and `HeadersMiddleware`: pace, breaker, timeout, size cap, no
+redirects. M5 adds what's new: records, manifests, caches by licence, metering.
+
+**Changed from the proposal**, each for a reason:
+- **The cache is per provider, never merged answers.** A merged candidate holds every contributor's fields, so a
+  `.passThrough` source's data would end up in a shared cache. Each provider's records are cached under its own
+  licence; merging runs on every answer, and it costs nothing. An answer with a failed or cut-off provider is never
+  cached (D-22).
+- **Each provider gets its own deadline, from its manifest; there's no 1.5 s fan-out.** MusicBrainz allows one
+  request per 1.1 s; a Wikidata search is two or three requests at 500 ms. A provider cut off by its deadline has
+  failed: that's a 503 when nothing else is found, never "no match".
+- **The router ranks; providers report.** A provider says what it matched exactly (`matched`: a catalogue number,
+  a subtype) and gives its own `relevance` only for a query with no words to compare. Providers' own scores can't be
+  compared with each other; D-22's single ranking can.
+- **Merge only on certain identity**, one to one (below). A similar title never merges, so two pressings' fields
+  can't mix. The secondary tier's rule (the proposal says both "confidence < 0.9" and "fills missing fields") is
+  settled with the manifests.
+- **What a provider can do is code; tier, cost, cache lifetime, pace and deadline are data.** The data is YAML in the
+  repo, checked at start-up: a bad file stops the server (fail closed, PLAN §5). There's no live reload. The kill
+  switch starts as configuration plus a restart, then becomes a Postgres row toggled with `psql`. No admin endpoint:
+  it would be a surface outside App Attest.
+- **Recognition is its own protocol**, returning `IdentifyHints`, not a `DataProvider` with an image query (the
+  proposal says both). A hosted model must keep no photo (PD-118, D-24).
+- **Adapters never see who pays.** Only the metering middleware does, through a task-local.
+- **No field filtering by type file on the server.** The server doesn't have tegola's type files, and the app
+  already drops keys a type doesn't declare.
+- **Ledger writes are buffered, off the request path.** A ledger failure never fails a lookup.
+
+**Cost per collector** (M5's ledger). One row per outbound call and per cache hit, as proposed. The payer is
+`HMAC(App Attest key id, monthly salt)`; the key id itself is never stored or logged. Each month's salt is random
+and destroyed when the month ends, so months can't be linked, even by us. Raw rows go after 35 days; monthly totals
+by type stay. It writes per-install pseudonyms to a table, which PLAN §5's "log shape, never content" didn't
+foresee, so tegola records it beside ADR-0001.
+
+**Paid sources** are assumed. So the cost model, the budget guard and the kill switch are built for real in M5. The
+free-tier caps, type packs and a subscription (sections 05–06) are tegola's product decisions. They conflict with
+tegola D-25 (no subscription in v1) and ADR-0001, so tegola records them as a proposal for the owner.
+
+**One repo.** Each provider keeps its own target in this package (D-23). If build times grow, the clients move to a
+second package in this repo.
+
+**Done here (T5.1, T5.2):**
+- **One vocabulary.** "Supplier" is now "provider" in the code: `DataProvider`, `LookupRouter`, `SearchQuery`,
+  `ProviderConnection`, `ProviderTransport`, `ProviderFailure`, `Sources/TegolaServer/Providers/`. D-22 to D-26 keep
+  the names they were written with.
+- **`ProviderRecord`.** A provider returns records, not candidates: the release's ids, the spine's roles, the type
+  file's fields, images, external ids (its own included), what it matched exactly, its relevance, and its source.
+  It no longer computes a confidence.
+- **`Ranking`.** D-22's formula, in one place: title 70 %, subtitle 20 %, year 10 %. The subtitle is compared with
+  the closest of the record's names (a board game's publishers), and the result is multiplied by the provider's
+  `ProviderWeights`. An exact barcode is 0.95 (Wikidata 0.9). A catalogue number with no words uses the source's
+  relevance, up to 0.9. A catalogue number matched exactly lifts the score to 0.9. Every provider's numbers are as
+  before.
+- **`RecordMerge`.** Two providers' records are one candidate when they share a release-level external id, or when
+  they have the same type, title (folded), subtype, region and year, all five present.
+  - A record says which of its ids name the release itself (`identifying`): MusicBrainz's release mbid. IGDB's,
+    ScreenScraper's and BGG's ids name the game, which every platform's release shares, so they don't count.
+  - Records that disagree on an id never merge, even through a chain of other links.
+  - A link must be one to one: a record that could be either of two records of another provider (reissues) stays on
+    its own.
+  - A candidate never holds two records of one provider.
+  - The type's configured order picks the leading record, whose id, title and fields win; the others fill in what it
+    lacks, and every source is listed.
+  - Candidates come best first, ties broken by id.
+- **The router** caches each provider's records, cut to its best 10, and scores them on every read. It drops a
+  record that names another provider, type or id prefix. It merges in the configured order, whoever answered first.
+  A query with no words and one whose words fold to nothing ("?") are ranked differently, so they're cached apart.
+- **The review** (a separate agent, over this change) found nothing serious in what runs today. Each finding is now
+  fixed, with a test:
+  - a BGG record kept only 30 publishers, so a publisher asked for further down the list scored less than before (it
+    now keeps the closest one too);
+  - a chain of links could join records that disagree on an id;
+  - game-level ids counted as release identity;
+  - the router didn't check the id prefix;
+  - the cache key above.
+- **What changes for the app:** IGDB and ScreenScraper no longer return one game twice. An import row both find is
+  `matched`, where it used to be `ambiguous` (D-13).

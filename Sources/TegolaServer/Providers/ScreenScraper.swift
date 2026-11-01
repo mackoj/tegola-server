@@ -5,13 +5,13 @@ import ScreenScraperAPI
 /// Video games from ScreenScraper (D-22), through the client generated from `api/sources/screenscraper.openapi.yaml`
 /// (D-23). Words only, strong on retro platforms and regional titles. It needs a developer id and password (and,
 /// optionally, a member's, for a higher quota). Its API takes them in the query string, so these URLs are never
-/// logged, and its media URLs, which carry them too, are never passed to the app: candidates from ScreenScraper have
+/// logged, and its media URLs, which carry them too, are never passed to the app: records from ScreenScraper have
 /// no images. An answer without `jeux` (or `jeu`) is an error page, not "no match".
 /// Works are `screenscraper:game:<id>`, releases `screenscraper:game:<id>:<region or any>`.
-struct ScreenScraperSupplier: DataSupplier {
+struct ScreenScraperProvider: DataProvider {
   typealias Game = ScreenScraperAPI.Components.Schemas.Game
 
-  let connection: SupplierConnection
+  let connection: ProviderConnection
   let credentials: ScreenScraperCredentials
   let client: ScreenScraperAPI.Client
 
@@ -26,18 +26,18 @@ struct ScreenScraperSupplier: DataSupplier {
     attribution: "Data from ScreenScraper.fr"
   )
 
-  init(connection: SupplierConnection, credentials: ScreenScraperCredentials) {
+  init(connection: ProviderConnection, credentials: ScreenScraperCredentials) {
     self.connection = connection
     self.credentials = credentials
     self.client = ScreenScraperAPI.Client(
       serverURL: try! ScreenScraperAPI.Servers.Server1.url(),
-      transport: SupplierTransport(connection: connection)
+      transport: ProviderTransport(connection: connection)
     )
   }
 
-  func barcode(_ query: BarcodeQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] { [] }
+  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [ProviderRecord] { [] }
 
-  func search(_ query: SupplierQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] {
+  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [ProviderRecord] {
     guard !query.title.isEmpty else { return [] }
     let platform = VideoGamePlatforms.platform(subtype: query.subtype)
     let output = try await connection.call {
@@ -59,28 +59,18 @@ struct ScreenScraperSupplier: DataSupplier {
     case .ok(let ok): games = try await connection.decoded { try ok.body.json.response.jeux }
     case .undocumented(let status, _): throw .failed("http-\(status / 100)xx")
     }
-    var candidates: [Components.Schemas.Candidate] = []
+    var records: [ProviderRecord] = []
     for game in games.prefix(query.limit * 2) {
       guard let id = game.id.flatMap(Int.init), id > 0 else { continue }  // an empty search answers [{}]
       for release in Self.releases(game) {
         guard VideoGamePlatforms.fits(region: release.region, asked: query.region) else { continue }
-        let confidence = TextMatch.confidence(
-          title: query.title,
-          candidateTitle: release.title,
-          subtitle: query.subtitle,
-          candidateSubtitle: TextMatch.clean(game.systeme?.text),
-          year: query.year,
-          candidateYear: release.year
-        )
-        candidates.append(
-          candidate(id: id, game: game, release: release, confidence: confidence, reason: query.reason)
-        )
+        records.append(record(id: id, game: game, release: release))
       }
     }
-    return candidates
+    return records
   }
 
-  func work(id: String) async throws(SupplierFailure) -> Components.Schemas.Work? {
+  func work(id: String) async throws(ProviderFailure) -> Components.Schemas.Work? {
     let prefix = "screenscraper:game:"
     guard id.hasPrefix(prefix), let number = Int(id.dropFirst(prefix.count)), number > 0 else { return nil }
     let output = try await connection.call {
@@ -149,13 +139,9 @@ struct ScreenScraperSupplier: DataSupplier {
     return Array(releases.prefix(6))
   }
 
-  private func candidate(
-    id: Int,
-    game: Game,
-    release: Release,
-    confidence: Double,
-    reason: Components.Schemas.Reason.KindPayload
-  ) -> Components.Schemas.Candidate {
+  /// One region's release of a game, titled as that region knows it. Its subtitle is the system, which a query's
+  /// subtitle is compared with.
+  private func record(id: Int, game: Game, release: Release) -> ProviderRecord {
     let system = TextMatch.clean(game.systeme?.text)
     let subtype = VideoGamePlatforms.subtype(screenScraperSystem: game.systeme?.id.flatMap(Int.init))
     var fields: [String: Components.Schemas.FieldValue] = [:]
@@ -164,9 +150,8 @@ struct ScreenScraperSupplier: DataSupplier {
     }
     if let publisher = TextMatch.clean(game.editeur?.text) { fields["publisher"] = .case1(publisher) }
     if let region = release.region { fields["region"] = .case1(region) }
-    var reasons: [Components.Schemas.Reason] = [.init(kind: reason)]
-    if subtype != nil { reasons.append(.init(kind: .subtype)) }
-    return .init(
+    return ProviderRecord(
+      provider: name,
       releaseID: "screenscraper:game:\(id):\(release.region ?? "any")",
       workID: "screenscraper:game:\(id)",
       typeID: typeID,
@@ -175,11 +160,10 @@ struct ScreenScraperSupplier: DataSupplier {
       subtitle: system,
       year: release.year,
       region: release.region,
-      fields: fields.isEmpty ? nil : .init(additionalProperties: fields),
-      confidence: confidence,
-      reasons: reasons,
-      sources: [Self.source],
-      externalIDs: .init(additionalProperties: ["screenscraper": String(id)])
+      fields: fields,
+      externalIDs: ["screenscraper": String(id)],
+      matched: subtype == nil ? [] : [.subtype],
+      source: Self.source
     )
   }
 }

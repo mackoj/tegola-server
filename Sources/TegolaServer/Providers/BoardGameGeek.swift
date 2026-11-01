@@ -13,8 +13,8 @@ import OpenAPIRuntime
 /// for ids, then `thing` for the details of the best few. Releases and works are both `boardgamegeek:<id>`: BGG's
 /// unit is the game, not the edition. Answers are XML, which the generated client leaves raw: they're parsed here,
 /// refused when they carry a DOCTYPE, and treated as an error page unless their root is `<items>`.
-struct BoardGameGeekSupplier: DataSupplier {
-  let connection: SupplierConnection
+struct BoardGameGeekProvider: DataProvider {
+  let connection: ProviderConnection
   let client: BoardGameGeekAPI.Client
 
   let name = "boardgamegeek"
@@ -29,18 +29,18 @@ struct BoardGameGeekSupplier: DataSupplier {
   )
   static let imageHosts: Set<String> = ["cf.geekdo-images.com"]
 
-  init(connection: SupplierConnection, token: String) {
+  init(connection: ProviderConnection, token: String) {
     self.connection = connection
     self.client = BoardGameGeekAPI.Client(
       serverURL: try! BoardGameGeekAPI.Servers.Server1.url(),
-      transport: SupplierTransport(connection: connection),
+      transport: ProviderTransport(connection: connection),
       middlewares: [HeadersMiddleware { ["Authorization": "Bearer \(token)"] }]
     )
   }
 
-  func barcode(_ query: BarcodeQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] { [] }
+  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [ProviderRecord] { [] }
 
-  func search(_ query: SupplierQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] {
+  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [ProviderRecord] {
     guard !query.title.isEmpty else { return [] }
     let output = try await connection.call {
       try await client.search(query: .init(query: String(query.title.prefix(200)), _type: .boardgame))
@@ -56,23 +56,10 @@ struct BoardGameGeekSupplier: DataSupplier {
     }
     .prefix(min(10, query.limit * 2))
     guard !best.isEmpty else { return [] }
-    let games = try await things(best.map(\.id))
-    return games.compactMap { game in
-      let confidence = TextMatch.confidence(
-        title: query.title,
-        candidateTitle: game.name ?? "",
-        subtitle: query.subtitle,
-        candidateSubtitle: query.subtitle.flatMap { asked in
-          game.publishers.max { TextMatch.similarity(asked, $0) < TextMatch.similarity(asked, $1) }
-        },
-        year: query.year,
-        candidateYear: game.year
-      )
-      return candidate(game, confidence: confidence, reason: query.reason)
-    }
+    return try await things(best.map(\.id)).compactMap { record($0, asked: query.subtitle) }
   }
 
-  func work(id: String) async throws(SupplierFailure) -> Components.Schemas.Work? {
+  func work(id: String) async throws(ProviderFailure) -> Components.Schemas.Work? {
     guard id.hasPrefix(idPrefix), let number = Int(id.dropFirst(idPrefix.count)), number > 0,
       let game = try await things([number]).first, let title = TextMatch.clean(game.name)
     else { return nil }
@@ -85,7 +72,7 @@ struct BoardGameGeekSupplier: DataSupplier {
 
   // MARK: - requests
 
-  private func things(_ ids: [Int]) async throws(SupplierFailure) -> [Item] {
+  private func things(_ ids: [Int]) async throws(ProviderFailure) -> [Item] {
     let list = ids.filter { $0 > 0 }.map(String.init).joined(separator: ",")
     guard !list.isEmpty else { return [] }
     let output = try await connection.call { try await client.thing(query: .init(id: list, stats: ._1)) }
@@ -111,7 +98,7 @@ struct BoardGameGeekSupplier: DataSupplier {
 
   /// Reads an answer: at most the connection's size, no DOCTYPE or entity declaration (so no entity is ever
   /// expanded or fetched, whatever the platform's parser does with them), and `<items>` as the root.
-  private func parse(_ body: HTTPBody) async throws(SupplierFailure) -> [Item] {
+  private func parse(_ body: HTTPBody) async throws(ProviderFailure) -> [Item] {
     let data: Data
     do { data = try await Data(collecting: body, upTo: connection.maximumBytes) } catch {
       await connection.record(.failed("undecodable"))
@@ -140,11 +127,8 @@ struct BoardGameGeekSupplier: DataSupplier {
 
   // MARK: - mapping
 
-  private func candidate(
-    _ game: Item,
-    confidence: Double,
-    reason: Components.Schemas.Reason.KindPayload
-  ) -> Components.Schemas.Candidate? {
+  /// One game. Its subtitle is the first publisher; a query's subtitle is compared with each of them.
+  private func record(_ game: Item, asked: String?) -> ProviderRecord? {
     guard let title = TextMatch.clean(game.name) else { return nil }
     var fields: [String: Components.Schemas.FieldValue] = [:]
     let designers = game.designers.compactMap { TextMatch.clean($0) }.prefix(3)
@@ -160,19 +144,30 @@ struct BoardGameGeekSupplier: DataSupplier {
     if let url = allowedImageURL(game.thumbnail, hosts: Self.imageHosts) {
       images.append(.init(role: .thumbnail, url: url))
     }
-    return .init(
+    // Popular games list dozens of publishers. The record keeps the first 30, plus the one closest to the asked
+    // subtitle wherever it is, so the router's ranking sees the same best match and a cached record stays small.
+    let publishers = game.publishers.compactMap { TextMatch.clean($0) }
+    var others = Array(publishers.dropFirst().prefix(30))
+    if let asked, !asked.isEmpty,
+      let closest = publishers.dropFirst().max(by: {
+        TextMatch.similarity(asked, $0) < TextMatch.similarity(asked, $1)
+      }), !others.contains(closest)
+    {
+      others.append(closest)
+    }
+    return ProviderRecord(
+      provider: name,
       releaseID: "boardgamegeek:\(game.id)",
       workID: "boardgamegeek:\(game.id)",
       typeID: typeID,
       title: title,
-      subtitle: TextMatch.clean(game.publishers.first),
+      subtitle: publishers.first,
+      otherSubtitles: others,
       year: game.year,
-      fields: fields.isEmpty ? nil : .init(additionalProperties: fields),
-      images: images.isEmpty ? nil : images,
-      confidence: confidence,
-      reasons: [.init(kind: reason)],
-      sources: [Self.source],
-      externalIDs: .init(additionalProperties: ["boardgamegeek": String(game.id)])
+      fields: fields,
+      images: images,
+      externalIDs: ["boardgamegeek": String(game.id)],
+      source: Self.source
     )
   }
 

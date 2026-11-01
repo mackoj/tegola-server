@@ -135,7 +135,7 @@ struct LookupAPI: APIProtocol {
     }
     do {
       var results: [Components.Schemas.MatchResult.ResultsPayloadPayload] = []
-      // A batch stops after 20 s: rows run one after another, each against a supplier's shared pace, so a long one
+      // A batch stops after 20 s: rows run one after another, each against a provider's shared pace, so a long one
       // would hold the request open and spend everyone's pace. The rows it reached are cached, so the app's retry
       // after `Retry-After` goes further (D-22).
       let deadline = ContinuousClock.now + .seconds(20)

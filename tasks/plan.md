@@ -11,6 +11,7 @@ verifies on Linux: `scripts/ci.sh`, locally, in CI, or in a cloud session throug
 
 ```
 M1 foundation ──► M2 persistence ──► M3 first sources ──► M4 production (with tegola's M6)
+                                                    └──► M5 providers (D-27)
 ```
 
 ## M1 · foundation (PLAN §8)
@@ -65,3 +66,20 @@ cache shared by several instances.
 Prepared in M1 (D-16): the image, the Caddy + server Compose stack, `docs/DEPLOY.md` and its go-live checklist, and
 `scripts/docker-smoke.sh` in CI. Left for M4: the owner's answers (PLAN §9) filled in per the checklist, a host and
 DNS record, monitoring of the `auth failed` and 429 rates, and an end-to-end run with the app on a device (tegola M6).
+
+## M5 · providers
+
+The owner's "Data Providers" proposal, adopted with changes (D-27, `docs/proposals/data-providers.dc.html`): records
+and a router, manifests, caches by licence, metering, a budget guard and a kill switch. Some sources will be paid.
+Independent of M4: it runs on the M3 sources and their fixtures.
+
+| Task | Acceptance | Verify |
+|---|---|---|
+| T5.1 Decision and vocabulary | D-27; "supplier" is "provider" in code | Read-through; `scripts/ci.sh` |
+| T5.2 Records and the router | Providers return `ProviderRecord`s; `Ranking` scores them one way; `RecordMerge` makes one candidate per release on certain identity, one to one; same numbers for every provider | `RecordMergeTests`, `RankingTests`, the provider suites |
+| T5.3 Manifests | Capabilities in code; tier, coverage per type (subtypes, fields), weights, cost model, pace, deadline, cache policy, attribution, regions in `providers/<id>.yml`, checked at start-up (fail closed); Wikidata one provider with coverage per type; the secondary tier's rule; a deadline per provider whose cut is a failure | `ManifestTests`; a bad file stops the server |
+| T5.4 Caches by licence | Per-provider query and record caches in Postgres, lifetime the shorter of ours and the manifest's, `.passThrough` never stored, `.storeIDsOnly` keeps ids; a negative cache (24 h); in memory without a database | `StoreTests` on both stores; `CacheTests` |
+| T5.5 Metering, budget, kill switch | A `ProviderTransport` middleware writes one ledger row per outbound call and the router one per cache hit (provider, operation, type, subtype, outcome, cost, latency, payer, request id), buffered; payer `HMAC(key id, monthly salt)` with a random salt destroyed each month; raw rows deleted after 35 days, monthly totals kept; a budget per provider and type that refuses calls over it; a kill switch per provider and type | `LedgerTests`; a logs and table check that no key id is written |
+| T5.6 Recognizer | A `Recognizer` protocol (photo → `IdentifyHints`), metered, never cached, keeping no photo (PD-118); plugged into Identify (D-24) | when an image source is chosen |
+| T5.7 Docs and report | PLAN §4, README, DEPLOY, HANDOFF; `docs/milestones/M5.md`; a separate review agent | Read-through |
+

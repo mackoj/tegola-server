@@ -4,7 +4,7 @@ import Testing
 @testable import TegolaServer
 
 // Wikidata's answers, hand-written from the Action API's documented format (format version 1), like the other
-// suppliers' fixtures: this environment can't reach the provider. The ids are illustrative.
+// providers' fixtures: this environment can't reach the provider. The ids are illustrative.
 extension Fixture {
   static func wdItem(_ id: String) -> String {
     #"{"mainsnak":{"snaktype":"value","datavalue":{"value":{"entity-type":"item","numeric-id":1,"id":"\#(id)"},"type":"wikibase-entityid"},"datatype":"wikibase-item"},"type":"statement","rank":"normal"}"#
@@ -72,8 +72,8 @@ extension Fixture {
 }
 
 @Suite struct WikidataTests {
-  func source(_ transport: ReplayTransport, _ profile: WikidataProfile = .thing) -> WikidataSupplier {
-    WikidataSupplier(
+  func source(_ transport: ReplayTransport, _ profile: WikidataProfile = .thing) -> WikidataProvider {
+    WikidataProvider(
       profile: profile,
       connection: testConnection("wikidata", transport),
       userAgent: "tegola-server/1.0 ( ops@example.com )"
@@ -85,7 +85,7 @@ extension Fixture {
       ("action=wbsearchentities", [ok(Fixture.wikidataSearch)]),
       ("action=wbgetentities", [ok(Fixture.wikidataEntities), ok(Fixture.wikidataLabels)]),
     ])
-    let candidates = try await source(transport).search(
+    let candidates = try await source(transport).candidates(
       .init(title: "Tamagotchi", subtitle: "Bandai", limit: 5, reason: .title)
     )
     // The disambiguation page isn't a thing, the missing id is gone, the property id never reaches Wikidata.
@@ -116,7 +116,7 @@ extension Fixture {
       ("action=wbgetentities", [ok(Fixture.wikidataEntities)]),
     ])
     // A toy isn't a board game: nothing comes back, and no label request is made.
-    let candidates = try await source(transport, .boardGame).search(
+    let candidates = try await source(transport, .boardGame).candidates(
       .init(title: "Tamagotchi", limit: 5, reason: .title)
     )
     #expect(candidates.isEmpty)
@@ -134,11 +134,13 @@ extension Fixture {
         ]
       ),
     ])
-    let supplier = source(transport, .music)
-    #expect(supplier.tier == .fallback)
+    let provider = source(transport, .music)
+    #expect(provider.tier == .fallback)
     let candidate = try #require(
-      try await supplier.search(.init(title: "OK Computer", subtitle: "Radiohead", year: 1997, limit: 5, reason: .ocr))
-        .first
+      try await provider.candidates(
+        .init(title: "OK Computer", subtitle: "Radiohead", year: 1997, limit: 5, reason: .ocr)
+      )
+      .first
     )
     #expect(candidate.typeID == "music")
     #expect(candidate.subtitle == "Radiohead")
@@ -153,7 +155,7 @@ extension Fixture {
       ("action=query", [ok(Fixture.wikidataBarcodeHits)]),
       ("action=wbgetentities", [ok(Fixture.wikidataEntities), ok(Fixture.wikidataLabels)]),
     ])
-    let candidates = try await source(transport).barcode(.init(typeID: "thing", code: "4543112000013"))
+    let candidates = try await source(transport).candidates(.init(typeID: "thing", code: "4543112000013"))
     #expect(candidates.map(\.releaseID) == ["wikidata:Q193295"])
     #expect(candidates.first?.confidence == 0.9)
     #expect(candidates.first?.reasons.map(\.kind) == [.barcode])
@@ -163,7 +165,7 @@ extension Fixture {
       ("action=query", [ok(Fixture.wikidataBarcodeHits)]),
       ("action=wbgetentities", [ok(Fixture.wikidataEntities), ok(Fixture.wikidataLabels)]),
     ])
-    let byUPC = try await source(upc).barcode(.init(typeID: "thing", code: "543112000013"))
+    let byUPC = try await source(upc).candidates(.init(typeID: "thing", code: "543112000013"))
     #expect(byUPC.isEmpty)  // 0543112000013 is not 4543112000013
     #expect(upc.sent.first.flatMap { query($0, "srsearch") } == "haswbstatement:P3962=543112000013|P3962=0543112000013")
   }
@@ -182,15 +184,15 @@ extension Fixture {
     let transport = ReplayTransport([
       ("wikidata.org", ok(#"{"error":{"code":"maxlag","info":"Waiting for a database server"},"servedby":"mw1"}"#))
     ])
-    await #expect(throws: SupplierFailure.failed("api-error")) {
+    await #expect(throws: ProviderFailure.failed("api-error")) {
       _ = try await source(transport).search(.init(title: "Tamagotchi", limit: 5, reason: .title))
     }
   }
 
   @Test func itemIDsAreQAndDigitsOnly() {
-    #expect(WikidataSupplier.itemID("Q42") == "Q42")
+    #expect(WikidataProvider.itemID("Q42") == "Q42")
     for bad in ["Q", "Q0", "Q042", "P31", "q42", "Q42|Q43", "Q42&x=1", "Q1234567890123", "Q４２"] {
-      #expect(WikidataSupplier.itemID(bad) == nil)
+      #expect(WikidataProvider.itemID(bad) == nil)
     }
   }
 
@@ -207,40 +209,40 @@ extension Fixture {
   }
 }
 
-/// The tiers (D-26): a fallback is asked only when the primary suppliers found nothing.
-@Suite struct SupplierTierTests {
+/// The tiers (D-26): a fallback is asked only when the primary providers found nothing.
+@Suite struct ProviderTierTests {
   let query = BarcodeQuery(typeID: "music", code: "724385522925")
 
   @Test func aFallbackIsntAskedWhenAPrimaryFindsSomething() async throws {
-    let primary = ScriptedSupplier("a", answer: [candidate("a:1", confidence: 0.6)])
-    let fallback = ScriptedSupplier("w", tier: .fallback, answer: [candidate("w:1", confidence: 0.9)])
-    let service = SuppliersLookupService(sources: [fallback, primary])
+    let primary = ScriptedProvider("a", answer: [record("a:1")])
+    let fallback = ScriptedProvider("w", tier: .fallback, answer: [record("w:1")])
+    let service = LookupRouter(sources: [fallback, primary])
     #expect(try await service.barcode(query).map(\.releaseID) == ["a:1"])
     #expect(try await service.match(typeID: "music", .init(ref: "r", title: "x")).map(\.releaseID) == ["a:1"])
     #expect(fallback.calls == 0)
   }
 
   @Test func aFallbackAnswersWhenThePrimariesFindNothing() async throws {
-    let primary = ScriptedSupplier("a", answer: [])
-    let fallback = ScriptedSupplier("w", tier: .fallback, answer: [candidate("w:1", confidence: 0.5)])
-    let service = SuppliersLookupService(sources: [primary, fallback])
+    let primary = ScriptedProvider("a", answer: [])
+    let fallback = ScriptedProvider("w", tier: .fallback, answer: [record("w:1")])
+    let service = LookupRouter(sources: [primary, fallback])
     #expect(try await service.barcode(query).map(\.releaseID) == ["w:1"])
     #expect(try await service.identify(typeID: "music", .init(title: "x")).map(\.releaseID) == ["w:1"])
   }
 
   @Test func aFallbackAnswersWhenThePrimariesFail() async throws {
-    let service = SuppliersLookupService(sources: [
-      ScriptedSupplier("a", failure: .busy(retryAfter: 60)),
-      ScriptedSupplier("w", tier: .fallback, answer: [candidate("w:1", confidence: 0.5)]),
+    let service = LookupRouter(sources: [
+      ScriptedProvider("a", failure: .busy(retryAfter: 60)),
+      ScriptedProvider("w", tier: .fallback, answer: [record("w:1")]),
     ])
     #expect(try await service.barcode(query).map(\.releaseID) == ["w:1"])
   }
 
   /// A fallback's "no match" can't stand for a primary that couldn't answer: that's still "try again".
   @Test func aFailedPrimaryAndAnEmptyFallbackIsUnavailable() async throws {
-    let service = SuppliersLookupService(sources: [
-      ScriptedSupplier("a", failure: .busy(retryAfter: 60)),
-      ScriptedSupplier("w", tier: .fallback, answer: []),
+    let service = LookupRouter(sources: [
+      ScriptedProvider("a", failure: .busy(retryAfter: 60)),
+      ScriptedProvider("w", tier: .fallback, answer: []),
     ])
     do {
       _ = try await service.barcode(query)
@@ -251,17 +253,17 @@ extension Fixture {
   }
 
   @Test func nothingAnywhereWithoutFailuresIsNoMatch() async throws {
-    let service = SuppliersLookupService(sources: [
-      ScriptedSupplier("a"), ScriptedSupplier("w", tier: .fallback),
+    let service = LookupRouter(sources: [
+      ScriptedProvider("a"), ScriptedProvider("w", tier: .fallback),
     ])
     #expect(try await service.barcode(query).isEmpty)
   }
 
   /// Identify's two halves are one tier: a barcode the primary found keeps the fallback's words out.
   @Test func identifyStopsAtTheTierWhereEitherHalfFoundSomething() async throws {
-    let primary = BarcodeOnlySupplier(answer: [candidate("a:1", confidence: 0.95)])
-    let fallback = ScriptedSupplier("w", tier: .fallback, answer: [candidate("w:1", confidence: 0.9)])
-    let service = SuppliersLookupService(sources: [primary, fallback])
+    let primary = BarcodeOnlyProvider(answer: [record("a:1")])
+    let fallback = ScriptedProvider("w", tier: .fallback, answer: [record("w:1")])
+    let service = LookupRouter(sources: [primary, fallback])
     let candidates = try await service.identify(
       typeID: "music",
       .init(title: "OK Computer", barcode: .init(code: "724385522925"))
@@ -272,8 +274,8 @@ extension Fixture {
 
   /// A type with only a fallback is still a type the server answers for.
   @Test func aTypeWithOnlyAFallbackIsListedAndAnswered() async throws {
-    let service = SuppliersLookupService(sources: [
-      ScriptedSupplier("w", typeID: "board-games", tier: .fallback, answer: [candidate("w:1", confidence: 0.5)])
+    let service = LookupRouter(sources: [
+      ScriptedProvider("w", typeID: "board-games", tier: .fallback, answer: [record("w:1", typeID: "board-games")])
     ])
     #expect(service.supportedTypes == ["board-games"])
     #expect(try await service.match(typeID: "board-games", .init(ref: "r", title: "x")).map(\.releaseID) == ["w:1"])
@@ -281,16 +283,16 @@ extension Fixture {
 }
 
 /// Finds by barcode, never by words.
-final class BarcodeOnlySupplier: DataSupplier, @unchecked Sendable {
+final class BarcodeOnlyProvider: DataProvider, @unchecked Sendable {
   let name = "a"
   let typeID = "music"
   let idPrefix = "a:"
   let answersBarcodes = true
-  let answer: [Components.Schemas.Candidate]
+  let answer: [ProviderRecord]
 
-  init(answer: [Components.Schemas.Candidate]) { self.answer = answer }
+  init(answer: [ProviderRecord]) { self.answer = answer }
 
-  func barcode(_ query: BarcodeQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] { answer }
-  func search(_ query: SupplierQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] { [] }
-  func work(id: String) async throws(SupplierFailure) -> Components.Schemas.Work? { nil }
+  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [ProviderRecord] { answer }
+  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [ProviderRecord] { [] }
+  func work(id: String) async throws(ProviderFailure) -> Components.Schemas.Work? { nil }
 }

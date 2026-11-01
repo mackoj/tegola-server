@@ -73,8 +73,8 @@ let package = Package(
       swiftSettings: swiftSettings,
       plugins: [.plugin(name: "OpenAPIGenerator", package: "swift-openapi-generator")]
     ),
-    // One generated client per data supplier, from its OpenAPI description in api/sources/ (written by us: none of
-    // them publishes one; D-23). The suppliers in TegolaServer call these through one transport that keeps each
+    // One generated client per data provider, from its OpenAPI description in api/sources/ (written by us: none of
+    // them publishes one; D-23). The providers in TegolaServer call these through one transport that keeps each
     // provider's pace, breaker, timeout and size cap.
     .target(
       name: "MusicBrainzAPI",

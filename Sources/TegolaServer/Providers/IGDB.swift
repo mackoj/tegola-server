@@ -6,12 +6,12 @@ import TwitchAPI
 /// Video games from IGDB (D-22), through the clients generated from `api/sources/igdb.openapi.yaml` and
 /// `twitch.openapi.yaml` (D-23). Words only: IGDB has no barcode index. It needs a Twitch application's client id and
 /// secret, exchanged for an app access token; requests carry both. IGDB allows four requests a second and requires
-/// attribution. A candidate is one release date of a game: one platform in one region.
+/// attribution. A record is one release date of a game: one platform in one region.
 /// Works are `igdb:game:<id>`, releases `igdb:game:<id>:<platform id>:<region or any>`.
-struct IGDBSupplier: DataSupplier {
+struct IGDBProvider: DataProvider {
   typealias Game = IGDBAPI.Components.Schemas.Game
 
-  let connection: SupplierConnection
+  let connection: ProviderConnection
   let tokens: TwitchTokens
   let client: IGDBAPI.Client
 
@@ -33,48 +33,38 @@ struct IGDBSupplier: DataSupplier {
     "release_dates.platform.name", "platforms.id", "platforms.name",
   ].joined(separator: ",")
 
-  init(connection: SupplierConnection, tokens: TwitchTokens) {
+  init(connection: ProviderConnection, tokens: TwitchTokens) {
     self.connection = connection
     self.tokens = tokens
     self.client = IGDBAPI.Client(
       serverURL: try! IGDBAPI.Servers.Server1.url(),
-      transport: SupplierTransport(connection: connection),
+      transport: ProviderTransport(connection: connection),
       middlewares: [
         HeadersMiddleware { ["Client-ID": tokens.clientID, "Authorization": "Bearer \(try await tokens.token())"] }
       ]
     )
   }
 
-  func barcode(_ query: BarcodeQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] { [] }
+  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [ProviderRecord] { [] }
 
-  func search(_ query: SupplierQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] {
+  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [ProviderRecord] {
     guard !query.title.isEmpty else { return [] }
     let games = try await games(
       "search \"\(Self.escape(query.title))\"; fields \(Self.fields); limit \(min(20, query.limit * 2));"
     )
     let platform = VideoGamePlatforms.platform(subtype: query.subtype)
-    var candidates: [Components.Schemas.Candidate] = []
+    var records: [ProviderRecord] = []
     for game in games {
       for release in Self.releases(game) {
         if let platform, release.subtype != platform.subtype { continue }
         guard VideoGamePlatforms.fits(region: release.region, asked: query.region) else { continue }
-        let confidence = TextMatch.confidence(
-          title: query.title,
-          candidateTitle: game.name ?? "",
-          subtitle: query.subtitle,
-          candidateSubtitle: release.platformName,
-          year: query.year,
-          candidateYear: release.year
-        )
-        if let candidate = candidate(game, release, confidence: confidence, reason: query.reason) {
-          candidates.append(candidate)
-        }
+        if let record = record(game, release) { records.append(record) }
       }
     }
-    return candidates
+    return records
   }
 
-  func work(id: String) async throws(SupplierFailure) -> Components.Schemas.Work? {
+  func work(id: String) async throws(ProviderFailure) -> Components.Schemas.Work? {
     let prefix = "igdb:game:"
     guard id.hasPrefix(prefix), let number = Int(id.dropFirst(prefix.count)), number > 0 else { return nil }
     guard let game = try await games("fields \(Self.fields); where id = \(number); limit 1;").first,
@@ -100,10 +90,10 @@ struct IGDBSupplier: DataSupplier {
 
   // MARK: - requests
 
-  private func games(_ query: String) async throws(SupplierFailure) -> [Game] {
+  private func games(_ query: String) async throws(ProviderFailure) -> [Game] {
     var retried = false
     while true {
-      do throws(SupplierFailure) {
+      do throws(ProviderFailure) {
         let output = try await connection.call { try await client.games(body: .plainText(HTTPBody(query))) }
         switch output {
         case .ok(let ok): return try await connection.decoded { try ok.body.json }
@@ -166,12 +156,8 @@ struct IGDBSupplier: DataSupplier {
     return Array(releases.prefix(12))
   }
 
-  private func candidate(
-    _ game: Game,
-    _ release: Release,
-    confidence: Double,
-    reason: Components.Schemas.Reason.KindPayload
-  ) -> Components.Schemas.Candidate? {
+  /// One release of a game. Its subtitle is the platform, which a query's subtitle is compared with.
+  private func record(_ game: Game, _ release: Release) -> ProviderRecord? {
     guard let title = TextMatch.clean(game.name) else { return nil }
     var fields: [String: Components.Schemas.FieldValue] = [:]
     if let platform = release.platformName { fields["platform"] = .case1(platform) }
@@ -179,13 +165,12 @@ struct IGDBSupplier: DataSupplier {
       fields["publisher"] = .case1(publisher)
     }
     if let region = release.region { fields["region"] = .case1(region) }
-    var reasons: [Components.Schemas.Reason] = [.init(kind: reason)]
-    if release.subtype != nil { reasons.append(.init(kind: .subtype)) }
     let cover = game.cover?.imageId.flatMap { id -> String? in
       guard id.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }), id.count <= 64 else { return nil }
       return allowedImageURL("https://images.igdb.com/igdb/image/upload/t_cover_big/\(id).jpg", hosts: Self.imageHosts)
     }
-    return .init(
+    return ProviderRecord(
+      provider: name,
       releaseID: Self.releaseID(game, release),
       workID: "igdb:game:\(game.id)",
       typeID: typeID,
@@ -194,12 +179,11 @@ struct IGDBSupplier: DataSupplier {
       subtitle: release.platformName,
       year: release.year,
       region: release.region,
-      fields: fields.isEmpty ? nil : .init(additionalProperties: fields),
-      images: cover.map { [.init(role: .front, url: $0)] },
-      confidence: confidence,
-      reasons: reasons,
-      sources: [Self.source],
-      externalIDs: .init(additionalProperties: ["igdb": String(game.id)])
+      fields: fields,
+      images: cover.map { [.init(role: .front, url: $0)] } ?? [],
+      externalIDs: ["igdb": String(game.id)],
+      matched: release.subtype == nil ? [] : [.subtype],
+      source: Self.source
     )
   }
 
@@ -230,7 +214,7 @@ struct IGDBSupplier: DataSupplier {
 actor TwitchTokens {
   nonisolated let clientID: String
   private let clientSecret: String
-  private let connection: SupplierConnection
+  private let connection: ProviderConnection
   private let client: TwitchAPI.Client
   private var current: (token: String, expires: ContinuousClock.Instant)?
   private var inFlight: Task<String, any Error>?
@@ -238,18 +222,18 @@ actor TwitchTokens {
   /// A token younger than this that IGDB refuses isn't replaced: the credentials are wrong.
   private let minimumAge: Duration
 
-  init(clientID: String, clientSecret: String, connection: SupplierConnection, minimumAge: Duration = .seconds(60)) {
+  init(clientID: String, clientSecret: String, connection: ProviderConnection, minimumAge: Duration = .seconds(60)) {
     self.minimumAge = minimumAge
     self.clientID = clientID
     self.clientSecret = clientSecret
     self.connection = connection
     self.client = TwitchAPI.Client(
       serverURL: try! TwitchAPI.Servers.Server1.url(),
-      transport: SupplierTransport(connection: connection)
+      transport: ProviderTransport(connection: connection)
     )
   }
 
-  func token() async throws(SupplierFailure) -> String {
+  func token() async throws(ProviderFailure) -> String {
     if let current, current.expires > .now { return current.token }
     let task: Task<String, any Error>
     if let inFlight {
@@ -264,11 +248,11 @@ actor TwitchTokens {
       return token
     } catch {
       if inFlight == task { inFlight = nil }
-      throw error as? SupplierFailure ?? .failed("token")
+      throw error as? ProviderFailure ?? .failed("token")
     }
   }
 
-  private func fetch() async throws(SupplierFailure) -> String {
+  private func fetch() async throws(ProviderFailure) -> String {
     let (client, clientID, clientSecret) = (self.client, self.clientID, self.clientSecret)
     let output = try await connection.call {
       try await client.token(

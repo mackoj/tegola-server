@@ -236,39 +236,33 @@ struct IdentifyTests {
 }
 
 /// Answers a barcode with one list and words with another.
-struct SplitSupplier: DataSupplier {
+struct SplitProvider: DataProvider {
   let name = "split"
   let typeID = "music"
   let idPrefix = "split:"
   let answersBarcodes = true
-  var byBarcode: Result<[Components.Schemas.Candidate], SupplierFailure>
-  var byWords: Result<[Components.Schemas.Candidate], SupplierFailure>
+  var byBarcode: Result<[ProviderRecord], ProviderFailure>
+  var byWords: Result<[ProviderRecord], ProviderFailure>
 
-  func barcode(_ query: BarcodeQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] {
+  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [ProviderRecord] {
     try byBarcode.get()
   }
-  func search(_ query: SupplierQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] {
+  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [ProviderRecord] {
     try byWords.get()
   }
-  func work(id: String) async throws(SupplierFailure) -> Components.Schemas.Work? { nil }
+  func work(id: String) async throws(ProviderFailure) -> Components.Schemas.Work? { nil }
 }
 
 @Suite struct IdentifyServiceTests {
-  static func found(_ id: String, _ confidence: Double, _ kind: Components.Schemas.Reason.KindPayload)
-    -> Components.Schemas.Candidate
-  {
-    var candidate = candidate(id, confidence: confidence)
-    candidate.reasons = [.init(kind: kind)]
-    return candidate
-  }
-
   let hints = Components.Schemas.IdentifyHints(title: "OK Computer", barcode: .init(code: "724385522925"))
 
   @Test func aReleaseFoundByBarcodeAndWordsIsOneCandidateWithBothReasons() async throws {
-    let service = SuppliersLookupService(sources: [
-      SplitSupplier(
-        byBarcode: .success([Self.found("split:1", 0.95, .barcode)]),
-        byWords: .success([Self.found("split:1", 0.6, .title), Self.found("split:2", 0.5, .title)])
+    let service = LookupRouter(sources: [
+      SplitProvider(
+        byBarcode: .success([record("split:1", title: "OK Computer OKNOTOK")]),
+        byWords: .success([
+          record("split:1", title: "OK Computer OKNOTOK"), record("split:2", title: "OK Computer Live"),
+        ])
       )
     ])
     let candidates = try await service.identify(typeID: "music", hints)
@@ -279,22 +273,22 @@ struct SplitSupplier: DataSupplier {
   }
 
   @Test func oneHalfFailingDoesntHideTheOther() async throws {
-    let service = SuppliersLookupService(sources: [
-      SplitSupplier(byBarcode: .failure(.busy(retryAfter: 30)), byWords: .success([Self.found("split:2", 0.5, .title)]))
+    let service = LookupRouter(sources: [
+      SplitProvider(byBarcode: .failure(.busy(retryAfter: 30)), byWords: .success([record("split:2")]))
     ])
     #expect(try await service.identify(typeID: "music", hints).map(\.releaseID) == ["split:2"])
   }
 
   @Test func aFailureBesideNothingFoundIsUnavailable() async throws {
-    let service = SuppliersLookupService(sources: [
-      SplitSupplier(byBarcode: .failure(.busy(retryAfter: 30)), byWords: .success([]))
+    let service = LookupRouter(sources: [
+      SplitProvider(byBarcode: .failure(.busy(retryAfter: 30)), byWords: .success([]))
     ])
     await #expect(throws: SourceUnavailable.self) { try await service.identify(typeID: "music", hints) }
   }
 
   @Test func aBarcodeHintIsAskedAsABarcode() async throws {
-    let service = SuppliersLookupService(sources: [
-      SplitSupplier(byBarcode: .success([Self.found("split:1", 0.95, .barcode)]), byWords: .success([]))
+    let service = LookupRouter(sources: [
+      SplitProvider(byBarcode: .success([record("split:1")]), byWords: .success([]))
     ])
     let barcodeOnly = Components.Schemas.IdentifyHints(barcode: .init(code: "724385522925"))
     #expect(try await service.identify(typeID: "music", barcodeOnly).map(\.releaseID) == ["split:1"])

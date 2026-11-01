@@ -3,7 +3,7 @@ import Logging
 
 @testable import TegolaServer
 
-// Supplier answers for the tests (D-22, D-23). Written by hand from each provider's documented response format, because
+// Provider answers for the tests (D-22, D-23). Written by hand from each provider's documented response format, because
 // this sandbox can't reach the providers; trimmed to the fields the sources read, plus a few they must ignore.
 // Re-record them from the live APIs when a key is at hand (docs/milestones/M3.md).
 
@@ -63,9 +63,9 @@ func status(_ code: Int, headers: [String: String] = [:]) -> OutboundResponse {
 }
 
 /// A connection with no pause between requests, for tests.
-func testConnection(_ name: String, _ transport: any HTTPTransport, logger: Logger = quietLogger) -> SupplierConnection
+func testConnection(_ name: String, _ transport: any HTTPTransport, logger: Logger = quietLogger) -> ProviderConnection
 {
-  SupplierConnection(name: name, transport: transport, interval: .zero, logger: logger)
+  ProviderConnection(name: name, transport: transport, interval: .zero, logger: logger)
 }
 
 let quietLogger: Logger = {
