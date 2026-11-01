@@ -4,17 +4,14 @@ The state of the work for whoever picks it up next: a new session, another agent
 it short and current.
 
 **Updated:** 2026-11-01. M1 and M2 are merged (PRs #1–#4). The review of M1–M2 ran, and its fixes are on
-`claude/tegola-hummingbird-bff-9ad714` (D-19), open as tegola-server PR #5. That PR waits for tegola PR #10 (below).
+`claude/tegola-hummingbird-bff-9ad714` (D-19), open as tegola-server PR #5. tegola PR #10, which it needed, is merged.
 
 ## Resume here (in this order)
 
-1. **tegola PR #10** (`mackoj/tegola`, branch `claude/tegola-hummingbird-bff-9ad714`): the contract says a revoked key
-   stays revoked (tegola D-55). The merge conflict with tegola's M3 is resolved and the branch is pushed. Merge it once
-   its `linux-core` check is green.
+1. **tegola PR #10** (the contract says a revoked key stays revoked, tegola D-55): merged on 2026-11-01.
 2. **tegola-server PR #5** (this branch): the review fixes (D-19). Its CI drift check compares the contract with
-   tegola's `main`, so it goes green only after step 1 (the same thing happened with PR #1). After #10 merges, re-run
-   CI (push an empty-tree change, such as a HANDOFF date, or re-run the jobs), then merge once `linux` and `docker`
-   are green.
+   tegola's `main`, which has #10 since 2026-11-01, so the run after that date should be green. Check its `linux` and
+   `docker` jobs; if green, merge it. If `linux` fails on drift, the run started before #10 merged: re-run it.
 3. **Owner answers**, deferred until release: sources per type, hosting and domain, Team ID, shared caches (PLAN §9;
    persistence is answered: Postgres, D-17). `docs/DEPLOY.md` says where each answer goes.
 4. **M3, sources** (once the owner picks them): one per launch type behind `LookupService`, with recorded-response
