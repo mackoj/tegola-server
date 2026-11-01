@@ -305,6 +305,7 @@ final class ScriptedSupplier: DataSupplier, @unchecked Sendable {
   let typeID: String
   let idPrefix: String
   let answersBarcodes = true
+  let tier: SupplierTier
   var failure: SupplierFailure?
   var answer: [Components.Schemas.Candidate]
   private let lock = NSLock()
@@ -313,11 +314,13 @@ final class ScriptedSupplier: DataSupplier, @unchecked Sendable {
   init(
     _ name: String,
     typeID: String = "music",
+    tier: SupplierTier = .primary,
     answer: [Components.Schemas.Candidate] = [],
     failure: SupplierFailure? = nil
   ) {
     self.name = name
     self.typeID = typeID
+    self.tier = tier
     self.idPrefix = "\(name):"
     self.answer = answer
     self.failure = failure
@@ -523,8 +526,9 @@ final class RecordingSupplier: DataSupplier, @unchecked Sendable {
       "TEGOLA_IGDB_CLIENT_ID": "id", "TEGOLA_IGDB_CLIENT_SECRET": "TEGOLA-TEST-SENTINEL",
       "TEGOLA_SCREENSCRAPER_DEV_ID": "dev", "TEGOLA_SCREENSCRAPER_DEV_PASSWORD": "TEGOLA-TEST-SENTINEL",
       "TEGOLA_BGG_TOKEN": "TEGOLA-TEST-SENTINEL",
+      "TEGOLA_WIKIDATA_CONTACT": "ops@example.org",
     ])
-    #expect(settings.enabled == ["musicbrainz", "igdb", "screenscraper", "boardgamegeek"])
+    #expect(settings.enabled == ["musicbrainz", "igdb", "screenscraper", "boardgamegeek", "wikidata"])
     #expect(!settings.description.contains("TEGOLA-TEST-SENTINEL"))
   }
 
@@ -535,6 +539,7 @@ final class RecordingSupplier: DataSupplier, @unchecked Sendable {
     ["TEGOLA_SCREENSCRAPER_USER": "u", "TEGOLA_SCREENSCRAPER_PASSWORD": "p"],
     ["TEGOLA_BGG_TOKEN": "has space"],
     ["TEGOLA_MUSICBRAINZ_CONTACT": "line\nbreak"],
+    ["TEGOLA_WIKIDATA_CONTACT": "two words"],
     ["TEGOLA_BGG_TOKEN": String(repeating: "x", count: 257)],
   ])
   func aHalfSetOrUnsafeValueStopsTheServer(_ env: [String: String]) {

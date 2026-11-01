@@ -1,6 +1,7 @@
 import Logging
 
-/// The sources the settings turn on, each with its own connection: pace, breaker, timeout (D-22).
+/// The sources the settings turn on, each with its own connection: pace, breaker, timeout (D-22); Wikidata's
+/// profiles share one (D-26).
 func makeLookupService(
   _ settings: SourceSettings,
   transport: any HTTPTransport,
@@ -75,6 +76,22 @@ func makeLookupService(
         token: token
       )
     )
+  }
+  if let contact = settings.wikidataContact {
+    // One connection for every type's profile: Wikidata sees one client, one request at a time (D-26). Items with
+    // their statements are large, hence the bigger cap.
+    let connection = SupplierConnection(
+      name: "wikidata",
+      transport: transport,
+      interval: .milliseconds(500),
+      maximumBytes: 8 * 1024 * 1024,
+      logger: sourceLogger
+    )
+    for profile in WikidataProfile.all {
+      sources.append(
+        WikidataSupplier(profile: profile, connection: connection, userAgent: "tegola-server/1.0 ( \(contact) )")
+      )
+    }
   }
   return SuppliersLookupService(sources: sources)
 }

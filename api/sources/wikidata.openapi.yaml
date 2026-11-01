@@ -1,0 +1,116 @@
+openapi: 3.1.0
+info:
+  title: Wikidata Action API (the part tegola-server uses)
+  version: "1"
+  description: |
+    Written by tegola-server (D-23, D-26): Wikidata's Action API publishes no OpenAPI description. Sources:
+    https://www.wikidata.org/w/api.php?action=help&modules=wbsearchentities,
+    https://www.wikidata.org/w/api.php?action=help&modules=wbgetentities,
+    https://www.mediawiki.org/wiki/Help:Extension:WikibaseCirrusSearch (`haswbstatement`).
+    Format version 1 (the default): `missing` is an empty string. Every module answers on one path, so there is one operation; `action` picks the module, and the answer carries
+    the one member that module fills (`search`, `entities` or `query`). An error is a 200 with `error`.
+    Terms: a User-Agent naming the application and a contact (https://meta.wikimedia.org/wiki/User-Agent_policy),
+    requests one at a time. Data is CC0.
+servers:
+  - url: https://www.wikidata.org/w
+paths:
+  /api.php:
+    get:
+      operationId: api
+      summary: "`wbsearchentities` (words), `wbgetentities` (items by id) or `query` with `list=search` (a barcode)."
+      parameters:
+        - { name: action, in: query, required: true, schema: { type: string, enum: [wbsearchentities, wbgetentities, query] } }
+        - { name: format, in: query, required: true, schema: { type: string, enum: [json] } }
+        - { name: search, in: query, description: "wbsearchentities: the words.", schema: { type: string } }
+        - { name: type, in: query, description: "wbsearchentities: the entity type.", schema: { type: string, enum: [item] } }
+        - { name: language, in: query, description: "wbsearchentities: the language searched.", schema: { type: string } }
+        - { name: uselang, in: query, description: "wbsearchentities: the language of labels returned.", schema: { type: string } }
+        - { name: limit, in: query, description: "wbsearchentities: 1–50.", schema: { type: integer, minimum: 1, maximum: 50 } }
+        - { name: ids, in: query, description: "wbgetentities: item ids joined with `|`, at most 50.", schema: { type: string } }
+        - { name: props, in: query, description: "wbgetentities: e.g. `labels|descriptions|claims`.", schema: { type: string } }
+        - { name: languages, in: query, description: "wbgetentities: the label languages.", schema: { type: string } }
+        - { name: languagefallback, in: query, description: "wbgetentities: fall back to another language's label.", schema: { type: integer, enum: [1] } }
+        - { name: list, in: query, description: "query: the list module.", schema: { type: string, enum: [search] } }
+        - { name: srsearch, in: query, description: "query/search: a CirrusSearch query, e.g. `haswbstatement:P3962=…`.", schema: { type: string } }
+        - { name: srlimit, in: query, schema: { type: integer, minimum: 1, maximum: 50 } }
+        - { name: srnamespace, in: query, description: "query/search: 0, the items.", schema: { type: integer, enum: [0] } }
+      responses:
+        "200":
+          description: The module's answer, or an `error`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiAnswer" }
+components:
+  schemas:
+    ApiAnswer:
+      type: object
+      properties:
+        search: { type: array, items: { $ref: "#/components/schemas/SearchHit" } }
+        entities: { type: object, additionalProperties: { $ref: "#/components/schemas/Entity" } }
+        query:
+          type: object
+          properties:
+            search: { type: array, items: { type: object, required: [title], properties: { title: { type: string } } } }
+        error: { type: object, properties: { code: { type: string } } }
+    SearchHit:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        description: { type: string }
+    Entity:
+      description: An item. `missing` is set for an id that doesn't exist. Only the statements the server reads are listed.
+      type: object
+      properties:
+        id: { type: string }
+        missing: { type: string }
+        labels: { type: object, additionalProperties: { $ref: "#/components/schemas/Text" } }
+        descriptions: { type: object, additionalProperties: { $ref: "#/components/schemas/Text" } }
+        claims: { $ref: "#/components/schemas/Claims" }
+    Text:
+      type: object
+      properties:
+        language: { type: string }
+        value: { type: string }
+    Claims:
+      description: |
+        Statements by property: P31 instance of, P577 publication date, P571 inception, P3962 GTIN, P18 image,
+        P175 performer, P123 publisher, P176 manufacturer, P1716 brand, P170 creator, P178 developer.
+      type: object
+      properties:
+        P31: { $ref: "#/components/schemas/Statements" }
+        P577: { $ref: "#/components/schemas/Statements" }
+        P571: { $ref: "#/components/schemas/Statements" }
+        P3962: { $ref: "#/components/schemas/Statements" }
+        P18: { $ref: "#/components/schemas/Statements" }
+        P175: { $ref: "#/components/schemas/Statements" }
+        P123: { $ref: "#/components/schemas/Statements" }
+        P176: { $ref: "#/components/schemas/Statements" }
+        P1716: { $ref: "#/components/schemas/Statements" }
+        P170: { $ref: "#/components/schemas/Statements" }
+        P178: { $ref: "#/components/schemas/Statements" }
+    Statements:
+      type: array
+      items: { $ref: "#/components/schemas/Statement" }
+    Statement:
+      type: object
+      properties:
+        rank: { description: "preferred, normal or deprecated.", type: string }
+        mainsnak:
+          type: object
+          properties:
+            snaktype: { type: string }
+            datavalue:
+              type: object
+              properties:
+                type: { type: string }
+                value: { $ref: "#/components/schemas/DataValue" }
+    DataValue:
+      description: "A string (`commonsMedia`, `external-id`, `string`), an item (`wikibase-entityid`) or a `time`."
+      oneOf:
+        - type: string
+        - type: object
+          properties:
+            id: { type: string }
+            time: { type: string }

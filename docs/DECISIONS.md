@@ -462,3 +462,41 @@ MusicBrainz's pace.
   The contract needs no change: `Candidate.images` already exists. The app doesn't show candidate images yet.
 - **To check when the fixtures are re-recorded:** that release search, and not only lookup and browse, returns
   `cover-art-archive`. If it doesn't, search candidates simply have no images.
+
+### D-26 · Wikidata, and suppliers asked in tiers
+
+**Direction.** The owner, 2026-11-01: add Wikidata "the same way as the other[s]", through an OpenAPI file, a
+generated client and the supplier protocol; and "when we don't find something we should try another possible
+source", with the sources organised to allow it.
+
+**Decision.**
+- **Tiers.** `DataSupplier.tier` is `primary` (the default) or `fallback`. `SuppliersLookupService` asks a type's
+  primary suppliers at once, as before. Only when they find nothing (each answered "no match", or failed) does it
+  ask the fallbacks, and it stops at the first tier with candidates. With nothing found anywhere, any failure on the
+  way is still `503`: a fallback's "no match" can't stand for a primary that couldn't answer. Identify's two halves
+  (words and barcode) are asked together per tier, so a barcode the primary found keeps the fallback's looser word
+  matches out. A type whose only supplier is a fallback is listed and answered like any other.
+- **Wikidata** (`api/sources/wikidata.openapi.yaml`, `WikidataAPI`, `WikidataSupplier`). The Action API publishes no
+  OpenAPI description, so we wrote one: one operation, `api.php`, with `action` choosing `wbsearchentities` (words),
+  `wbgetentities` (items and their statements) or `query` with `list=search` and `haswbstatement:P3962=…` (a GTIN).
+  Errors come in a 200 with `error`, which is a failure, not "no match". Only the statements the server reads are
+  declared; the rest are ignored when decoding.
+- **One profile per type** (`WikidataProfile`): the classes (P31) that count as the type, the statement that names
+  the spine's subtitle, the tier and a weight on the confidence. `thing` is primary: any item except people, places,
+  taxa, names and Wikimedia pages, with the maker (manufacturer, brand, creator, developer, publisher) as subtitle.
+  `music` (albums, EPs, singles; the performer), `video-game` (video games; no subtitle, since the spine's subtitle
+  is the platform) and `board-games` (board and tabletop games; the publisher) are fallbacks. Adding a type is a
+  profile.
+- **What a candidate says.** An item is a work more often than an edition, so a candidate has no subtype, no work
+  id, and its confidence is the title match times the weight (0.7 to 0.85). A barcode match is 0.9, and only when
+  the item's GTIN is exactly the code (a 12-digit UPC-A is also asked as its EAN-13). Year: the earliest
+  publication date, else the inception; deprecated statements are ignored. A search costs two requests, three when a
+  subtitle needs its label.
+- **One connection**, shared by the profiles: Wikidata sees one paced client (500 ms, one request at a time, as
+  Wikimedia asks), with a User-Agent carrying `TEGOLA_WIKIDATA_CONTACT`. Its cap is 8 MiB, for items with many
+  statements. Ids are checked (`Q` and digits) before they reach a request, and a code must be a GTIN's digits.
+- **Labels in English**, with Wikidata's fallback to another language: the contract's requests carry no language.
+
+**Left for later.** Images: an item's P18 is a Commons file whose licence often requires attribution per file,
+which `Candidate.images` can't carry. Wikidata as a fallback for types beyond these four (books, comics, LEGO, …),
+which needs only a profile once the app ships them. A language from the request.

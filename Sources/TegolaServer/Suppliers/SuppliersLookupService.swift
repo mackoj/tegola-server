@@ -13,10 +13,26 @@ protocol DataSupplier: Sendable {
   var idPrefix: String { get }
   /// Barcode lookups are only asked of sources with a barcode index.
   var answersBarcodes: Bool { get }
+  /// When it's asked: with the type's other primary suppliers, or only when they found nothing (D-26).
+  var tier: SupplierTier { get }
 
   func barcode(_ query: BarcodeQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate]
   func search(_ query: SupplierQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate]
   func work(id: String) async throws(SupplierFailure) -> Components.Schemas.Work?
+}
+
+extension DataSupplier {
+  var tier: SupplierTier { .primary }
+}
+
+/// The order a type's suppliers are asked in (D-26). Every supplier of one tier is asked at once; the next tier only
+/// when the one before found nothing, whether its suppliers answered "no match" or failed. A source that knows a type
+/// well is primary; a general one (Wikidata) is a fallback, so its looser matches never crowd out a precise one.
+enum SupplierTier: Int, Comparable, CaseIterable, Sendable {
+  case primary
+  case fallback
+
+  static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
 }
 
 /// A words query, from `identifyObject`'s hints or one import row.
@@ -48,20 +64,29 @@ func cacheKeyString(_ parts: [String?]) -> String {
   return String(decoding: data, as: UTF8.self)
 }
 
-/// The suppliers the configuration turned on, grouped by type (D-22). Every supplier of a type is asked at once; the
-/// answers are merged and ranked. When some fail and others answer with candidates, those are enough. When all fail,
-/// or the ones that answered found nothing, the lookup is `SourceUnavailable` (503) with the shortest `Retry-After`
-/// among the failures, and the app retries: a failure never reads as "no match". Each supplier's answer is cut to
-/// its best 10 and cached; failures never are.
+/// The suppliers the configuration turned on, grouped by type (D-22), asked tier by tier (D-26). Every supplier of a
+/// tier is asked at once; the answers are merged and ranked. When some fail and others answer with candidates, those
+/// are enough. When a tier finds nothing (its suppliers failed, or found no match), the next tier is asked. When no
+/// tier finds anything and any supplier failed, the lookup is `SourceUnavailable` (503) with the shortest
+/// `Retry-After` among the failures, and the app retries: a failure never reads as "no match". Each supplier's answer
+/// is cut to its best 10 and cached; failures never are.
 package struct SuppliersLookupService: LookupService {
+  package typealias Candidate = Components.Schemas.Candidate
+
   let sources: [String: [any DataSupplier]]
-  let cache: AnswerCache<[Components.Schemas.Candidate]>
+  let cache: AnswerCache<[Candidate]>
   let works: AnswerCache<Components.Schemas.Work>
   let lifetimes: Lifetimes
 
   struct Lifetimes: Sendable {
     var answer: Duration = .seconds(24 * 3600)
     var empty: Duration = .seconds(3600)
+  }
+
+  /// What one tier found, and the `Retry-After` of each supplier that failed.
+  struct TierAnswer: Sendable {
+    var candidates: [Candidate] = []
+    var failures: [Int] = []
   }
 
   init(sources: [any DataSupplier], cacheCapacity: Int = 10_000, lifetimes: Lifetimes = Lifetimes()) {
@@ -73,20 +98,14 @@ package struct SuppliersLookupService: LookupService {
 
   package var supportedTypes: [String] { sources.keys.sorted() }
 
-  package func barcode(_ query: BarcodeQuery) async throws -> [Components.Schemas.Candidate] {
-    let asked = (sources[query.typeID] ?? []).filter(\.answersBarcodes)
-    let key = cacheKeyString([query.code, query.symbology?.rawValue, query.subtype, query.region])
-    return try await ask(asked, operation: "barcode", key: key) { source throws(SupplierFailure) in
-      try await source.barcode(query)
-    }
+  package func barcode(_ query: BarcodeQuery) async throws -> [Candidate] {
+    try await tiered(query.typeID) { tier in await askBarcode(tier, query) }
   }
 
-  /// The words go to every supplier of the type, a barcode to those with a barcode index, both at once. A release
+  /// The words go to every supplier of the tier, a barcode to those with a barcode index, both at once. A release
   /// both find is one candidate, with the higher confidence and both reasons. One half failing doesn't hide what the
-  /// other found; both failing, or one failing while the other found nothing, is `SourceUnavailable` (D-24).
-  package func identify(typeID: String, _ hints: Components.Schemas.IdentifyHints) async throws
-    -> [Components.Schemas.Candidate]
-  {
+  /// other found; when neither finds anything, the next tier is asked (D-24, D-26).
+  package func identify(typeID: String, _ hints: Components.Schemas.IdentifyHints) async throws -> [Candidate] {
     let words = TextMatch.queryTitle(title: hints.title, text: hints.text)
     let query: SupplierQuery? =
       words == nil && hints.catalogueNumber == nil
@@ -110,45 +129,27 @@ package struct SuppliersLookupService: LookupService {
         region: hints.region
       )
     }
-    async let byWords: Result<[Components.Schemas.Candidate], SourceUnavailable> = Self.capture {
-      guard let query else { return [] }
-      return try await ask(sources[typeID] ?? [], operation: "search", key: query.cacheKey) {
-        source throws(SupplierFailure) in try await source.search(query)
+    return try await tiered(typeID) { tier in
+      func words() async -> TierAnswer {
+        guard let query else { return TierAnswer() }
+        return await askWords(tier, query)
       }
-    }
-    async let byBarcode: Result<[Components.Schemas.Candidate], SourceUnavailable> = Self.capture {
-      guard let barcode else { return [] }
-      return try await self.barcode(barcode)
-    }
-    let outcomes = await [byBarcode, byWords]
-    var merged: [Components.Schemas.Candidate] = []
-    var failures: [SourceUnavailable] = []
-    for outcome in outcomes {
-      switch outcome {
-      case .success(let candidates): merged = Self.merge(merged, candidates)
-      case .failure(let failure): failures.append(failure)
+      func code() async -> TierAnswer {
+        guard let barcode else { return TierAnswer() }
+        return await askBarcode(tier, barcode)
       }
-    }
-    if merged.isEmpty, let soonest = failures.map(\.retryAfter).min() {
-      throw SourceUnavailable(retryAfter: soonest)
-    }
-    return merged
-  }
-
-  private static func capture(
-    _ body: () async throws -> [Components.Schemas.Candidate]
-  ) async -> Result<[Components.Schemas.Candidate], SourceUnavailable> {
-    do { return .success(try await body()) } catch let unavailable as SourceUnavailable {
-      return .failure(unavailable)
-    } catch {
-      return .failure(SourceUnavailable(retryAfter: 5))
+      async let byWords = words()
+      async let byBarcode = code()
+      let (codes, text) = await (byBarcode, byWords)
+      return TierAnswer(
+        candidates: Self.merge(codes.candidates, text.candidates),
+        failures: codes.failures + text.failures
+      )
     }
   }
 
   /// Adds `more` to `base`; a release already there keeps one entry, with the higher confidence and every reason.
-  static func merge(_ base: [Components.Schemas.Candidate], _ more: [Components.Schemas.Candidate])
-    -> [Components.Schemas.Candidate]
-  {
+  static func merge(_ base: [Candidate], _ more: [Candidate]) -> [Candidate] {
     var merged = base
     for candidate in more {
       guard let index = merged.firstIndex(where: { $0.releaseID == candidate.releaseID }) else {
@@ -163,9 +164,7 @@ package struct SuppliersLookupService: LookupService {
     return merged
   }
 
-  package func match(typeID: String, _ item: Components.Schemas.MatchItem) async throws
-    -> [Components.Schemas.Candidate]
-  {
+  package func match(typeID: String, _ item: Components.Schemas.MatchItem) async throws -> [Candidate] {
     let query = SupplierQuery(
       title: item.title,
       subtitle: item.subtitle,
@@ -177,9 +176,7 @@ package struct SuppliersLookupService: LookupService {
       limit: 5,
       reason: .title
     )
-    return try await ask(sources[typeID] ?? [], operation: "search", key: query.cacheKey) {
-      source throws(SupplierFailure) in try await source.search(query)
-    }
+    return try await tiered(typeID) { tier in await askWords(tier, query) }
   }
 
   package func work(id: String) async throws -> Components.Schemas.Work? {
@@ -194,17 +191,48 @@ package struct SuppliersLookupService: LookupService {
     }
   }
 
-  /// Asks every source in parallel, each through the cache, and merges what comes back.
+  // MARK: - tiers
+
+  /// Asks the type's tiers in order and returns the first answer with candidates. With none, any failure on the way
+  /// is `SourceUnavailable`: a fallback's "no match" can't stand for a primary that couldn't answer.
+  private func tiered(_ typeID: String, _ body: ([any DataSupplier]) async -> TierAnswer) async throws -> [Candidate] {
+    let all = sources[typeID] ?? []
+    var failures: [Int] = []
+    for tier in SupplierTier.allCases {
+      let asked = all.filter { $0.tier == tier }
+      guard !asked.isEmpty else { continue }
+      let answer = await body(asked)
+      if !answer.candidates.isEmpty { return answer.candidates }
+      failures += answer.failures
+    }
+    if let soonest = failures.min() { throw SourceUnavailable(retryAfter: soonest) }
+    return []
+  }
+
+  private func askWords(_ tier: [any DataSupplier], _ query: SupplierQuery) async -> TierAnswer {
+    await ask(tier, operation: "search", key: query.cacheKey) { source throws(SupplierFailure) in
+      try await source.search(query)
+    }
+  }
+
+  private func askBarcode(_ tier: [any DataSupplier], _ query: BarcodeQuery) async -> TierAnswer {
+    let key = cacheKeyString([query.code, query.symbology?.rawValue, query.subtype, query.region])
+    return await ask(tier.filter(\.answersBarcodes), operation: "barcode", key: key) {
+      source throws(SupplierFailure) in try await source.barcode(query)
+    }
+  }
+
+  /// Asks every source in parallel, each through the cache, and collects what comes back.
   private func ask(
     _ asked: [any DataSupplier],
     operation: String,
     key: String,
-    _ body: @escaping @Sendable (any DataSupplier) async throws(SupplierFailure) -> [Components.Schemas.Candidate]
-  ) async throws -> [Components.Schemas.Candidate] {
-    guard !asked.isEmpty else { return [] }
+    _ body: @escaping @Sendable (any DataSupplier) async throws(SupplierFailure) -> [Candidate]
+  ) async -> TierAnswer {
+    guard !asked.isEmpty else { return TierAnswer() }
     let cache = self.cache
     let lifetimes = self.lifetimes
-    let outcomes = await withTaskGroup(of: Result<[Components.Schemas.Candidate], SupplierFailure>.self) { group in
+    let outcomes = await withTaskGroup(of: Result<[Candidate], SupplierFailure>.self) { group in
       for source in asked {
         group.addTask {
           let cacheKey = "\(source.name)|\(source.typeID)|\(operation)|\(key)"
@@ -219,22 +247,18 @@ package struct SuppliersLookupService: LookupService {
           }
         }
       }
-      var outcomes: [Result<[Components.Schemas.Candidate], SupplierFailure>] = []
+      var outcomes: [Result<[Candidate], SupplierFailure>] = []
       for await outcome in group { outcomes.append(outcome) }
       return outcomes
     }
-    var candidates: [Components.Schemas.Candidate] = []
-    var failures: [SupplierFailure] = []
+    var answer = TierAnswer()
     for outcome in outcomes {
       switch outcome {
-      case .success(let answer): candidates += answer
-      case .failure(let failure): failures.append(failure)
+      case .success(let candidates): answer.candidates += candidates
+      case .failure(let failure): answer.failures.append(failure.retryAfter)
       }
     }
-    if candidates.isEmpty, let soonest = failures.map(\.retryAfter).min() {
-      throw SourceUnavailable(retryAfter: soonest)
-    }
-    return candidates
+    return answer
   }
 }
 
