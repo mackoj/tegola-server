@@ -39,6 +39,9 @@ public func buildApplication(
     services.append(client)
     migrate = { try await store.migrate() }
   }
+  if !configuration.sources.isEmpty {
+    dependencies.lookups = makeLookupService(configuration.sources, transport: AsyncHTTPTransport(), logger: logger)
+  }
   let router = try buildRouter(dependencies: dependencies, logger: logger)
   var app = Application(
     router: router,

@@ -44,6 +44,7 @@ do {
       "environment": "\(configuration.environment.rawValue)",
       "address": "\(configuration.host):\(configuration.port)",
       "database": "\(configuration.database.map(\.description) ?? "in memory")",
+      "sources": "\(configuration.sources.description)",
     ]
   )
   try await app.runService()
