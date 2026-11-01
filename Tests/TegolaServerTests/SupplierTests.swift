@@ -48,6 +48,9 @@ func query(_ request: OutboundRequest, _ name: String) -> String? {
     #expect(field(candidate, "label") == .case1("Parlophone"))
     #expect(field(candidate, "catalogNumber") == .case1("NODATA 02"))
     #expect(field(candidate, "country") == .case1("GB"))
+    let cover = "https://coverartarchive.org/release/\(Fixture.mbRelease)/front"
+    #expect(candidate.images?.map(\.role) == [.front, .thumbnail])
+    #expect(candidate.images?.map(\.url) == ["\(cover)-500", "\(cover)-250"])
 
     let request = try #require(transport.sent.first)
     #expect(query(request, "query") == "barcode:724385522925")
@@ -69,6 +72,8 @@ func query(_ request: OutboundRequest, _ name: String) -> String? {
     #expect(candidates[0].confidence == 1)
     #expect(candidates[1].confidence < candidates[0].confidence)
     #expect(field(candidates[1], "format") == .case1("2×CD"))
+    // A cover is listed only when the archive says the release has a front: no art, or only a back, is none.
+    #expect(candidates.allSatisfy { $0.images == nil })
     let lucene = try #require(transport.sent.first.flatMap { query($0, "query") })
     #expect(lucene == "release:(ok computer) AND artist:(Radiohead)")
   }

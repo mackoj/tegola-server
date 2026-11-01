@@ -51,6 +51,8 @@ Plan: `tasks/plan.md`, M3. Report: `docs/milestones/M3.md`. Sources chosen by th
 
 ## Open follow-ups
 
+- [x] Cover art for music from the Cover Art Archive, without an extra request (D-25)
+
 - Owner: check the pinned root's fingerprint against apple.com once (D-4).
 - Owner: answer PLAN §9 (sources, hosting, Team ID, shared caches; persistence answered: Postgres), deferred until release
   (`docs/DEPLOY.md`, go-live checklist).

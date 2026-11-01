@@ -5,7 +5,9 @@ it short and current.
 
 **Updated:** 2026-11-01. M1 to M3 are merged (PRs #1–#13), and so is **contract 0.2.0** (tegola D-71, PR #14):
 `identifyObject` (`POST /types/{type}/identify`, JSON hints or a multipart photo and hints) replaces `searchObjects`
-(D-24). The photo is size-checked, JPEG-checked and dropped: no source matches images yet.
+(D-24). The photo is size-checked, JPEG-checked and dropped: no source matches images yet. Music candidates now
+carry their Cover Art Archive front, when MusicBrainz says there is one (D-25). tegola's M5 and M6 are merged, so
+the app's lookup client exists: M4's end-to-end run waits only on a host and a device.
 
 ## Resume here (in this order)
 
@@ -15,6 +17,7 @@ it short and current.
    documented formats, since this sandbox can't reach the providers. Check in particular:
    - each answer's Content-Type (the generated clients refuse undeclared ones, D-23);
    - IGDB's `release_region`;
+   - that MusicBrainz's release search returns `cover-art-archive` (D-25);
    - ScreenScraper's system ids;
    - BGG's bearer token.
 2. **Adding a supplier:** write (or fetch) its description in `api/sources/`, add a `<Name>API` target in
@@ -27,10 +30,10 @@ it short and current.
    PR. A Postgres major bump needs the upgrade step in D-21 once a deployment exists.
 4. **Owner answers**, deferred until release: hosting and domain, Team ID, shared caches (PLAN §9; persistence and
    sources are answered, D-17, D-22). `docs/DEPLOY.md` says where each answer goes.
-5. **M4, production**, paced by tegola's M6 (the app's lookup client).
+5. **M4, production**: tegola's M6 (the app's lookup client) is merged; what remains needs the owner's host, domain
+   and a device (`tasks/plan.md`, M4).
 6. **Open options:**
    - an image source for Identify, per type (D-24 says where it plugs in, and what PD-118 asks of it);
-   - cover art for music (Cover Art Archive);
    - a supplier cache and rate limits shared by several instances (D-9);
    - an import batch that answers the rows it reached instead of 503 (a contract change, tegola first);
    - a range for `MatchItem.year` in the contract (the server drops out-of-range years today).
@@ -42,7 +45,7 @@ update.
 
 ## Where things stand
 
-- **Spec:** `docs/PLAN.md`; decisions D-1 to D-24 in `docs/DECISIONS.md`.
+- **Spec:** `docs/PLAN.md`; decisions D-1 to D-25 in `docs/DECISIONS.md`.
 - **M1 (foundation):** the contract's seven operations served by Hummingbird 2 from generated code. App Attest
   registration and assertions are verified end to end, with every control of PLAN §5 and no lookup source yet (D-12).
   Report: `docs/milestones/M1.md`.
