@@ -12,7 +12,7 @@ Plan: `tasks/plan.md`, M1. Report: `docs/milestones/M1.md`.
 - [x] T1.6 Tooling: scripts, CI, Dockerfile
 - [x] T1.7 Docs
 - [x] T1.8 tegola's CLAUDE.md, DECISIONS and HANDOFF point here
-- [ ] Separate review agent over the M1 branch before merge
+- [x] Separate review agent over the M1 branch (ran over M1 and M2 together, D-19)
 
 ## M2 · persistence (Postgres, D-17)
 
@@ -25,7 +25,9 @@ Plan: `tasks/plan.md`, M2. Report: `docs/milestones/M2.md`.
 - [x] T2.5 Postgres in Compose and CI, smoke checks
 - [x] T2.6 Undeclared 503s keep their headers and body (D-18)
 - [x] T2.7 Docs and report
-- [ ] Separate review agent over M1 and M2
+- [x] Separate review agents over M1 and M2 (security; correctness and contract). Fixes: D-19, PR #5
+- [x] Merge tegola PR #10 (revoked key, tegola D-55)
+- [ ] Merge tegola-server PR #5 once its CI is green
 
 ## M3 · first sources
 

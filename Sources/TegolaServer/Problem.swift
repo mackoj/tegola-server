@@ -23,6 +23,7 @@ enum ProblemKind: String, Sendable {
   case notFound = "not-found"
   case payloadTooLarge = "payload-too-large"
   case unsupportedMediaType = "unsupported-media-type"
+  case notAcceptable = "not-acceptable"
   case tooManyRequests = "too-many-requests"
   case unavailable = "unavailable"
   case internalError = "internal-error"
@@ -35,6 +36,7 @@ enum ProblemKind: String, Sendable {
     case .notFound: .notFound
     case .payloadTooLarge: .contentTooLarge
     case .unsupportedMediaType: .unsupportedMediaType
+    case .notAcceptable: .notAcceptable
     case .tooManyRequests: .tooManyRequests
     case .unavailable: .serviceUnavailable
     case .internalError: .internalServerError
@@ -52,6 +54,8 @@ enum ProblemKind: String, Sendable {
     case .notFound: "Not found."
     case .payloadTooLarge: "The request body is too large."
     case .unsupportedMediaType: "Unsupported content type."
+    case .notAcceptable:
+      "The answer's media type isn't in Accept. Accept application/json and application/problem+json."
     case .tooManyRequests: "Too many requests. Retry later."
     case .unavailable: "The service is unavailable. Retry later."
     case .internalError: "Something went wrong on the server."

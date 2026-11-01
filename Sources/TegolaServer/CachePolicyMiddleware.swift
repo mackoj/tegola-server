@@ -18,6 +18,8 @@ struct CachePolicyMiddleware: ServerMiddleware {
     var (response, responseBody) = try await next(request, body, metadata)
     if response.status == .ok, let policy = Self.publicOperations[operationID] {
       response.headerFields[.cacheControl] = policy
+      // Titles and descriptions follow Accept-Language: a shared cache must keep one answer per language.
+      response.headerFields[.vary] = "Accept-Language"
     } else {
       response.headerFields[.cacheControl] = "no-store"
     }

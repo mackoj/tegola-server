@@ -186,6 +186,19 @@ struct StoreTests {
     }
   }
 
+  /// Twenty concurrent issues against a cap of five: exactly five challenges (D-19).
+  @Test(arguments: kinds)
+  func theChallengeCapHoldsUnderConcurrency(_ kind: Kind) async throws {
+    try await Self.withStores(kind, capacity: 5) { (stores: Stores) async throws in
+      let challenges = stores.challenges
+      let issued = try await withThrowingTaskGroup(of: Bool.self) { group in
+        for _ in 0..<20 { group.addTask { try await challenges.issue() != nil } }
+        return try await group.reduce(0) { $0 + ($1 ? 1 : 0) }
+      }
+      #expect(issued == 5)
+    }
+  }
+
   // MARK: Postgres only
 
   @Test(.enabled(if: databaseURL != nil))

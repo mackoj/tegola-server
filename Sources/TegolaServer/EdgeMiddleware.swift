@@ -9,7 +9,9 @@ import OpenAPIRuntime
 ///
 /// 1. In production, refuses any request that carries `X-Tegola-Debug-Token` (403), before anything else runs.
 /// 2. Refuses a declared `Content-Length` above the body cap (413) without reading the body.
-/// 3. Applies the per-IP rate limit (429 with `Retry-After`); registration calls get a stricter bucket of their own.
+/// 3. Applies the per-client rate limit (429 with `Retry-After`), the client being its IPv4 address or IPv6 /64
+///    (`RateLimitKey`, D-19). Registration's stricter bucket is applied by operation in `AppAttestMiddleware`, so no
+///    spelling of the path (`/v1//app-attest/…`) can avoid it.
 /// 4. Turns every thrown error into a problem document with no internal detail: a body that doesn't decode is 400,
 ///    an unknown route 404, anything unexpected 500.
 /// 5. Adds the security headers to every response, and `Cache-Control: no-store` unless a handler chose otherwise.
@@ -18,7 +20,6 @@ import OpenAPIRuntime
 struct EdgeMiddleware<Context: RemoteAddressRequestContext>: RouterMiddleware {
   let configuration: ServerConfiguration
   let perIP: RateLimiter
-  let registrationPerIP: RateLimiter
 
   func handle(_ request: Request, context: Context, next: (Request, Context) async throws -> Response)
     async throws -> Response
@@ -51,13 +52,12 @@ struct EdgeMiddleware<Context: RemoteAddressRequestContext>: RouterMiddleware {
     {
       return ProblemEncoding.response(.payloadTooLarge)
     }
-    let client = clientAddress(request, context: context)
-    let limiter = request.uri.path.hasPrefix("/v1/app-attest/") ? registrationPerIP : perIP
-    if case .limited(let retryAfter) = await limiter.take(client) {
+    let client = RateLimitKey.client(clientAddress(request, context: context))
+    if case .limited(let retryAfter) = await perIP.take(client) {
       return ProblemEncoding.response(.tooManyRequests, retryAfter: retryAfter)
     }
     do {
-      return try await next(request, context)
+      return try await RequestScope.$client.withValue(client) { try await next(request, context) }
     } catch {
       return Self.problem(for: error, logger: context.logger)
     }
@@ -92,7 +92,9 @@ struct EdgeMiddleware<Context: RemoteAddressRequestContext>: RouterMiddleware {
       if error.underlyingError is DecodingError { return ProblemEncoding.response(.badRequest) }
       switch error.httpStatus {
       case .badRequest: return ProblemEncoding.response(.badRequest)
-      case .unsupportedMediaType, .notAcceptable: return ProblemEncoding.response(.unsupportedMediaType)
+      case .unsupportedMediaType: return ProblemEncoding.response(.unsupportedMediaType)
+      // An Accept that rules out the answer's media type (a problem document to a client that only accepts JSON).
+      case .notAcceptable: return ProblemEncoding.response(.notAcceptable)
       case .notFound: return ProblemEncoding.response(.notFound)
       default: break
       }

@@ -3,25 +3,47 @@
 The state of the work for whoever picks it up next: a new session, another agent, or the owner. Read this first, keep
 it short and current.
 
-**Updated:** 2026-10-31, M2 (Postgres) done on `claude/tegola-hummingbird-bff-9ad714`. M3 waits on the owner's choice of
-sources.
+**Updated:** 2026-11-01. M1 and M2 are merged (PRs #1–#4). The review of M1–M2 ran, and its fixes are on
+`claude/tegola-hummingbird-bff-9ad714` (D-19), open as tegola-server PR #5. tegola PR #10, which it needed, is merged.
+
+## Resume here (in this order)
+
+1. **tegola PR #10** (the contract says a revoked key stays revoked, tegola D-55): merged on 2026-11-01.
+2. **tegola-server PR #5** (this branch): the review fixes (D-19). Its CI drift check compares the contract with
+   tegola's `main`, which has #10 since 2026-11-01, so the run after that date should be green. Check its `linux` and
+   `docker` jobs; if green, merge it. If `linux` fails on drift, the run started before #10 merged: re-run it.
+3. **Owner answers**, deferred until release: sources per type, hosting and domain, Team ID, shared caches (PLAN §9;
+   persistence is answered: Postgres, D-17). `docs/DEPLOY.md` says where each answer goes.
+4. **M3, sources** (once the owner picks them): one per launch type behind `LookupService`, with recorded-response
+   tests. `matchBatch` already charges one token per row (D-19).
+5. **M4, production**, paced by tegola's M6 (the app's lookup client).
+
+The owner's working style: carry on without asking. Use a worktree per task, branch, commit, push, open the PR, wait
+for green CI, merge. Stop only for decisions that are the owner's (PLAN §9). To keep the PR description free of the
+footer this session's GitHub tool appends, create the PR with a placeholder body, then set the real body with an
+update.
 
 ## Where things stand
 
-- **Spec:** `docs/PLAN.md`; decisions D-1 to D-18 in `docs/DECISIONS.md`. Open owner questions: PLAN §9,
-  deferred until release, except persistence: Postgres (D-17).
-- **M2 (persistence):** keys and challenges in Postgres (`PostgresStore`), required in production; the Compose stack
-  runs Postgres on an internal-only network. Report: `docs/milestones/M2.md`.
-- **M1 (foundation):** the contract's seven operations served by Hummingbird 2 from generated code; App Attest
-  registration and assertions verified end to end; every control of PLAN §5; no lookup source yet (D-12).
+- **Spec:** `docs/PLAN.md`; decisions D-1 to D-19 in `docs/DECISIONS.md`.
+- **M1 (foundation):** the contract's seven operations served by Hummingbird 2 from generated code. App Attest
+  registration and assertions are verified end to end, with every control of PLAN §5 and no lookup source yet (D-12).
   Report: `docs/milestones/M1.md`.
-- **Verified:** on Linux (Swift 6.4.2), `scripts/ci.sh`: 48 tests in 5 suites, format lint, contract lint (Redocly),
-  contract drift, secret scan. The binary was run: it refuses a bad config (exit 78), serves `/v1/health` with the
-  security headers, answers 401 to an unsigned lookup and 403 to a debug token in production.
-- **Docker:** the image, a Caddy + server Compose stack and the go-live runbook (`docs/DEPLOY.md`, D-16).
-  `scripts/docker-smoke.sh` is green: 15 checks on the image and on the stack over HTTPS. CI runs it on every push.
-- **Not verified:** a real device's attestation (needs the app's M6); a real domain and certificate.
-- **tegola** knows about this repo: its `CLAUDE.md` ("Companion repo"), D-41 and its HANDOFF.
+- **M2 (persistence):** keys and challenges in Postgres (`PostgresStore`), required in production. The Compose stack
+  runs Postgres on an internal-only network. Report: `docs/milestones/M2.md`.
+- **Review (D-19):**
+  - Two independent agents found nothing critical or high. All findings are fixed except digest pinning and shared
+    rate limits.
+  - The fixes: registration bucket by operation, IPv6 /64 keys, per-row match cost, atomic challenge cap, Postgres
+    <16 lock literal, password decoded once, 406, clean startup exits, `Vary`, image trusts no X-Forwarded-For, drift
+    check can't pass empty, Dependabot.
+- **Verified on this branch** (Linux, Swift 6.4.2, Postgres 17.11 in Docker):
+  - `swift test`: 77 tests in 8 suites (18 + 59).
+  - `scripts/docker-smoke.sh`: 25 checks. The image part (13) was re-run after the last change; the stack part (12)
+    passed on the run before, and nothing it covers changed since.
+- **Not verified:** a real device's attestation (tegola M6); a real domain and certificate; a managed Postgres with
+  `verify-full`.
+- **tegola** knows about this repo: its `CLAUDE.md` ("Companion repo"), D-41, D-42, D-55 and its HANDOFF.
 
 ## Run it locally
 
@@ -35,13 +57,6 @@ TEGOLA_ENVIRONMENT=development TEGOLA_APP_ID=ABCDE12345.fr.macko.tegola \
 
 **If anything fails:** paste `build/ci-summary.md`, and the log it names, into a session.
 
-## What's next
-
-1. **Owner answers** to PLAN §9, deferred until release: sources per type, hosting and domain, the Team ID, shared
-   caches. `docs/DEPLOY.md` says where each one goes; nothing else waits on them.
-2. **A separate review** of M1 and M2 (the workflow's rule; not run yet).
-3. **M3, sources:** one per launch type behind `LookupService`, with recorded-response tests, once the owner picks them.
-4. **M4, production**, paced by tegola's M6 (the app's lookup client).
 
 ## How the work is run
 
@@ -63,6 +78,10 @@ TEGOLA_ENVIRONMENT=development TEGOLA_APP_ID=ABCDE12345.fr.macko.tegola \
   the compiler lists what to implement. Never edit `api/` here alone.
 - **Generated code** is in `.build/plugins/outputs/…/OpenAPIGenerator/GeneratedSources/` after a build: read
   `Types+Operations.swift` for the shapes a handler returns.
+- **Gotchas found in the review:** Hummingbird's router ignores empty path segments, so never choose behaviour by
+  path prefix: use the operation id. A `.build` copied from another checkout fails on stale module caches: delete
+  `.build/out` and `.build/plugins`, keep `.build/checkouts`. A wrong database password isn't fatal to PostgresNIO,
+  which retries; the server exits 1 at the 60 s startup limit, and the refusal (SQLSTATE 28P01) is logged before that.
 - **Gotchas found in M2:** the generated server drops an `undocumented` response's headers and body: throw
   `ServiceUnavailable` instead (D-18). In Swift Testing, a closure whose only `try` is inside `#expect` needs an
   explicit `async throws in`.

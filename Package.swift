@@ -71,6 +71,7 @@ let package = Package(
         "TegolaServer",
         .product(name: "Hummingbird", package: "hummingbird"),
         .product(name: "Logging", package: "swift-log"),
+        .product(name: "PostgresNIO", package: "postgres-nio"),
       ],
       swiftSettings: swiftSettings
     ),

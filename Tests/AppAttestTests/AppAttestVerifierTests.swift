@@ -64,6 +64,24 @@ struct AppAttestVerifierTests {
     }
   }
 
+  /// The credential certificate lives three days: an attestation verified after that, or before it starts, fails.
+  @Test(arguments: [4 * 86_400.0, -2 * 3_600.0])
+  func refusesACertificateOutsideItsValidity(_ offset: TimeInterval) async throws {
+    let ca = try FakeAppAttestCA()
+    let device = FakeDevice()
+    let object = try ca.attestation(for: device, challenge: challenge, appID: appID, environment: .production)
+    let later = ca.now.addingTimeInterval(offset)
+    let verifier = try AppAttestVerifier(
+      appID: appID,
+      allowedEnvironments: [.production],
+      rootCertificates: [ca.root],
+      now: { later }
+    )
+    await #expect(throws: AppAttestError.certificateChainInvalid) {
+      try await verifier.verifyAttestation(attestationObject: object, keyID: Array(device.keyID), challenge: challenge)
+    }
+  }
+
   @Test func refusesAnotherChallenge() async throws {
     let ca = try FakeAppAttestCA()
     let device = FakeDevice()

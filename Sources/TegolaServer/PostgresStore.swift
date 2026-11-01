@@ -52,7 +52,9 @@ public struct DatabaseSettings: Sendable, Equatable, CustomStringConvertible, Cu
       let components = URLComponents(string: raw),
       let scheme = components.scheme, ["postgres", "postgresql"].contains(scheme),
       let host = components.host, !host.isEmpty,
-      let username = components.user.flatMap({ $0.removingPercentEncoding }), !username.isEmpty
+      // `user` and `password` are already percent-decoded: decoding again would turn a password's "%25" into "%"
+      // and then fail (D-19).
+      let username = components.user, !username.isEmpty
     else { throw invalid }
     let database = String(components.path.drop(while: { $0 == "/" }))
     guard !database.isEmpty, !database.contains("/") else { throw invalid }
@@ -79,7 +81,7 @@ public struct DatabaseSettings: Sendable, Equatable, CustomStringConvertible, Cu
       host: host,
       port: port,
       username: username,
-      password: components.password.flatMap { $0.removingPercentEncoding },
+      password: components.password,
       database: database,
       tls: tls,
       rootCertificatePath: rootCertificatePath
@@ -166,12 +168,15 @@ public final class PostgresStore: AttestKeyStore, ChallengeStore, Sendable {
     )
   ]
 
+  static let migrationLock: Int64 = 7_452_756_119_418_773_345
+  static let challengeLock: Int64 = 7_452_756_119_418_773_346
+
   /// Brings the schema up to date. Safe to run from several instances at once: a transaction-scoped advisory lock
   /// serialises them, and each version is applied once.
   public func migrate() async throws {
     try await client.withTransaction(logger: logger) { connection in
-      // "tegola" as a 64-bit key; any constant works as long as it never changes.
-      try await connection.query("SELECT pg_advisory_xact_lock(7_452_756_119_418_773_345)", logger: logger)
+      // Any constant works as long as it never changes. No digit separators: Postgres before 16 refuses them.
+      try await connection.query("SELECT pg_advisory_xact_lock(\(Self.migrationLock))", logger: logger)
       try await connection.query(
         """
         CREATE TABLE IF NOT EXISTS tegola_schema_migrations (
@@ -284,23 +289,31 @@ public final class PostgresStore: AttestKeyStore, ChallengeStore, Sendable {
 
   // MARK: ChallengeStore
 
+  /// Issues a challenge unless the store is full. The expiry purge, the count and the insert run in one transaction
+  /// under an advisory lock, so concurrent callers, on any number of instances, can't push it past the cap (D-19).
   public func issue() async throws -> (challenge: String, expiresAt: Date)? {
     let current = now()
-    try await client.query("DELETE FROM attest_challenges WHERE expires_at <= \(current)", logger: logger)
-    var outstanding = 0
-    for try await count in try await client.query("SELECT count(*) FROM attest_challenges", logger: logger)
-      .decode(Int64.self)
-    {
-      outstanding = Int(count)
-    }
-    guard outstanding < challengeCapacity else { return nil }
     let challenge = ChallengeGenerator.make()
     let expiresAt = current.addingTimeInterval(challengeLifetime)
-    try await client.query(
-      "INSERT INTO attest_challenges (challenge, expires_at) VALUES (\(challenge), \(expiresAt))",
-      logger: logger
-    )
-    return (challenge, expiresAt)
+    let capacity = Int64(challengeCapacity)
+    let logger = self.logger
+    let issued = try await client.withTransaction(logger: logger) { connection -> Bool in
+      try await connection.query("SELECT pg_advisory_xact_lock(\(Self.challengeLock))", logger: logger)
+      try await connection.query("DELETE FROM attest_challenges WHERE expires_at <= \(current)", logger: logger)
+      let rows = try await connection.query(
+        """
+        INSERT INTO attest_challenges (challenge, expires_at)
+        SELECT \(challenge), \(expiresAt)
+        WHERE (SELECT count(*) FROM attest_challenges) < \(capacity)
+        RETURNING 1
+        """,
+        logger: logger
+      )
+      var inserted = false
+      for try await _ in rows.decode(Int32.self) { inserted = true }
+      return inserted
+    }
+    return issued ? (challenge, expiresAt) : nil
   }
 
   public func consume(_ challenge: String) async throws -> Bool {

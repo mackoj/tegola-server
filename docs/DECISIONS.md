@@ -168,7 +168,7 @@ design work.
   and process limits. Its env file is `.env`, git-ignored.
 - **The image** builds behind a TLS-intercepting proxy through an optional build secret (`proxy_ca`), used only by
   `swift package resolve`. `scripts/docker-smoke.sh` checks that it never reaches the image.
-- **Checked** by `scripts/docker-smoke.sh` (15 checks: the image's user, the exit-78 refusals, health, 401, 403 for
+- **Checked** by `scripts/docker-smoke.sh` (15 checks at the time, 25 since M2 and D-19: the image's user, the exit-78 refusals, health, 401, 403 for
   a debug token, then the stack over HTTPS: health, HSTS, no `Server`, 401, 404 outside `/v1`, HTTP→HTTPS, no
   published server port) locally and in CI's `docker` job.
 - **Not decided here:** the host, the domain, persistence, sources and a shared cache. They are the owner's (PLAN §9).
@@ -223,3 +223,52 @@ affected M1's "challenge store full" and `getWork`'s source outage too.
 **Decision.** Handlers throw `ServiceUnavailable(retryAfter:)` instead, and `EdgeMiddleware` answers it with the
 problem document and `Retry-After`. No handler returns `.undocumented`. `aSourceOutageOnAWorkIs503WithRetryAfterAndAProblem`
 and `StoreFailureTests` pin it.
+
+### D-19 · What the review of M1 and M2 changed
+
+Two independent review agents (security; correctness and contract) read `main` at 80ef72f. Neither found anything
+critical or high. Every finding is fixed here, except the two listed under "Left open".
+
+- **Registration's bucket is chosen by operation, not by path** (security, medium). Hummingbird's router ignores
+  empty path segments, so `GET /v1//app-attest/challenge` reached `getAttestChallenge` but missed the
+  `/v1/app-attest/` prefix check, getting the general bucket (120, then 2/s) instead of 10 an hour. The edge now
+  applies only the general per-client bucket and records the client in `RequestScope`; `AppAttestMiddleware` applies
+  the registration bucket to `getAttestChallenge` and `registerAttestKey` by operation id.
+- **An IPv6 client is its /64** (security, medium). `RateLimitKey.client` keys IPv4 by address, IPv6 by /64, and an
+  IPv4-mapped IPv6 address as its IPv4 address. A full limiter table now evicts its least recently used tenth instead
+  of refusing every new client with 429, which a spray of addresses could have caused for everyone.
+- **A match batch costs one token per row** (security, low, for M3). Each row will be a lookup against a source's
+  quota. The middleware takes one token, and `matchBatch` takes the rest from the same per-key bucket
+  (`RequestScope.keyID`) or answers 429.
+- **The image trusts no `X-Forwarded-For`** (`TEGOLA_TRUSTED_PROXY_HOPS=0`), as the configuration's default says.
+  Compose sets 1 for Caddy (security, low).
+- **The contract-drift check can't pass by comparing nothing.** It fails in CI, or when `TEGOLA_DIR` is set, if
+  tegola's contract is missing, and CI's tegola checkout is required (both reviews, low).
+- **The Postgres challenge cap is atomic.** The purge, the count and an `INSERT … SELECT … WHERE count < cap` run in
+  one transaction under an advisory lock (both reviews, low). Tested with 20 concurrent issues against a cap of 5, on
+  both stores.
+- **Postgres 15 and earlier could run the migration** (correctness, medium). The lock key was a SQL literal with
+  digit separators, which only Postgres 16 accepts. Both lock keys are now bound parameters.
+- **The database password was percent-decoded twice** (correctness, low–medium). `URLComponents` already decodes the
+  user and password, so `%25` became `%` and then failed to decode, and the server connected with no password.
+- **A 406 is a 406.** An `Accept` that rules out the answer's media type was reported as 415; it is now
+  `/problems/not-acceptable` (correctness, low).
+- **Startup failures exit cleanly.** An error after the configuration was accepted (a database that can't be reached
+  or migrated, an unreadable CA file) used to crash at top level. It is now logged (a database error by code, SQLSTATE
+  and server message, never bound values or the password) and exits 1. Configuration errors stay 78 (correctness, low).
+- **The cacheable barcode answer says `Vary: Accept-Language`**, since its titles follow that header (correctness,
+  low).
+- **The contract says a revoked key stays revoked** (correctness, low). It told the app to re-register a revoked key
+  on `unknown-key`, while the code answers 403 and refuses to register it again. Fixed in tegola first (its D-55,
+  tegola PR #10), then synced.
+- **Tests that passed for the wrong reason, or were missing:**
+  - The streamed body cap: the test client always declares `Content-Length`, so the edge answered. It is now tested
+    on the middleware with a body of unknown length.
+  - A production server holding a development key: now refused, and tested.
+  - Certificates outside their validity: tested, both expired and not yet valid.
+  - The `//` path, IPv6 /64, a full limiter table, per-row cost, 406, `Vary`, and a password containing `%25`.
+  - `docker-smoke.sh`: a wrong database password exits 1 with the reason in the log and never the password.
+- **Dependabot** now watches the GitHub Actions, the Dockerfile and Compose images, and the Swift packages.
+
+**Left open.** Pinning actions and images by SHA or digest instead of tag: Dependabot keeps the tags current, and
+pinning is a decision to take with the hosting. Shared rate limits for several instances (D-9).

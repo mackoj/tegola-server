@@ -14,6 +14,7 @@ struct LookupAPI: APIProtocol {
   let keys: any AttestKeyStore
   let challenges: any ChallengeStore
   let storeHealth: @Sendable () async -> Bool
+  let perKey: RateLimiter
   let logger: Logger
 
   // MARK: - lookup
@@ -71,6 +72,18 @@ struct LookupAPI: APIProtocol {
       try Validation.match(request)
     } catch {
       return .badRequest(.init(body: .applicationProblemJson(ProblemKind.badRequest.schema(detail: error.field))))
+    }
+    // Each row is a lookup against a source's quota: the call paid one token in the middleware, the other rows pay
+    // here (D-19). A debug-token call has no key and no per-key bucket.
+    if let key = RequestScope.keyID, request.items.count > 1,
+      case .limited(let retryAfter) = await perKey.take(key, cost: Double(request.items.count - 1))
+    {
+      return .tooManyRequests(
+        .init(
+          headers: .init(retryAfter: retryAfter),
+          body: .applicationProblemJson(ProblemKind.tooManyRequests.schema())
+        )
+      )
     }
     do {
       var results: [Components.Schemas.MatchResult.ResultsPayloadPayload] = []
