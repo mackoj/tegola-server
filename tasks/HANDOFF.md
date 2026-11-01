@@ -26,9 +26,13 @@ it short and current.
    - Keep every D-22 security rule and its test: query escaping, ids checked before URLs, the Twitch secret in a
      body, ScreenScraper media URLs dropped, the image host allowlist, XML without external entities, logs without
      content. Then update D-22 (or add D-23), `docs/milestones/M3.md` and `tasks/todo.md`.
-2. **M3, the review.** A separate review agent was started on `a810cc2` at the end of the last session; its findings
-   were not recorded before the session was cleared. Re-run it after item 1, on the whole M3 diff
-   (`git diff origin/main`), then fix what it finds.
+2. **M3, the review's findings: fix them.** A separate review agent read `a810cc2`. Its findings are in
+   `tasks/M3-review.md`, unverified:
+   - critical: an unbounded `MatchItem.year` can overflow and crash the server;
+   - high: one source failing while another answers empty reads as "no match"; credentials may follow redirects;
+   - plus medium and low items, and tests that prove too little.
+   Verify each against the code and fix it with a test, during or right after item 1 (finding 1 first: it's a crash).
+   Then run a fresh review on the whole M3 diff before the PR is marked ready.
 3. **M3, the Docker smoke test** was re-running when the session was cleared, with the AsyncHTTPClient dependency in
    the image. Re-run `scripts/docker-smoke.sh` (start `dockerd` first, see below) and record the result in
    `docs/milestones/M3.md`, "Verification".
