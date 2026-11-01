@@ -48,7 +48,9 @@ iPhone (TegolaLookupAPI client, App Attest) ──HTTPS──► reverse proxy (
   Apple's root pinned in source. No I/O, testable with a fake CA.
 - **`TegolaServer`**: the code generated from the contract (`generate: [types, server]`, `accessModifier: package`),
   handlers (`LookupAPI`), middlewares, `ServerConfiguration`, in-memory stores (`InMemoryAttestKeyStore`,
-  `ChallengeStore`, `RateLimiter`), the `LookupService` protocol.
+  `ChallengeStore`, `RateLimiter`), the `LookupService` protocol, and `LookupRouter` with the data providers
+  (`Providers/`, D-27).
+- **`<Name>API`**: one generated client per provider, from its description in `api/sources/` (D-23).
 - **`tegola-server`**: `main.swift` loads the configuration, refuses to start on a bad one, and runs.
 - **Stores** sit behind protocols (`AttestKeyStore`, `ChallengeStore`): `PostgresStore` in production (D-17), the
   in-memory ones in tests and development.
@@ -84,6 +86,11 @@ answer "no match", and the app falls back to words, as tegola's `board-games.yml
 **Added** (owner, 2026-11-01; D-26): Wikidata, for `thing`, and as the **fallback** for the other three. A type's
 suppliers are asked in tiers: the fallback only when the primary sources found nothing (or failed). Wikidata also
 has a barcode index (GTIN, P3962), so a `thing` barcode can match.
+
+**Records and a router** (owner's proposal, 2026-11-01; D-27, M5): a provider returns `ProviderRecord`s, evidence in
+the contract's vocabulary, and never ranks or decides. `LookupRouter` scores every record the same way, merges the
+records of several providers that certainly name the same release into one candidate, and caches each provider's
+records. Manifests, caches by licence, metering, a budget guard and a kill switch follow in M5.
 
 Each source: one type conforming to `LookupService` (or a composite per type), keys from the environment only, a
 timeout and a circuit breaker, its own outbound rate limit within the provider's terms, server-side caching of
@@ -158,6 +165,7 @@ fraud-metric receipts aren't checked yet.
 | **M2 · persistence** (done) | `PostgresStore` for keys and challenges, migrations, required in production; Postgres in the Compose stack (D-17) | Restart keeps keys; concurrent replays: exactly one passes |
 | **M3 · first sources** | One source per launch type (§4), caching, timeouts, circuit breaker, attribution | Recorded-response tests per source; `/health` lists the types |
 | **M4 · production** | Host, domain (the contract's placeholder `api.tegola.app`), proxy, secrets, monitoring; a run against the real app on a device | The app's M6 lookup flow works end to end on a device |
+| **M5 · providers** | Records and a router, manifests, caches by licence, metering, budget and kill switch (D-27) | Recorded-response tests; a bad manifest stops the server; every outbound call has a ledger row |
 
 Tegola's client needs the server from its M6 (tegola HANDOFF), so M2–M4 can follow the app's pace.
 

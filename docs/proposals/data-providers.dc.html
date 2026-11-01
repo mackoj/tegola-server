@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Archivo:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>body{margin:0;background:#EAE3D6}a{color:#2B44D6}a:hover{color:#FF5B2E}</style>
+</helmet>
+<div style="max-width:1360px;margin:0 auto;padding:60px 28px 100px;font-family:Archivo,system-ui,sans-serif;color:#17130F;box-sizing:border-box">
+  <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+    <div style="font:500 10px 'DM Mono',monospace;letter-spacing:.18em;color:#8A7F70">CLCTN · SERVER · DATA PROVIDERS · NOVEMBER 2026</div>
+    <div style="font:500 9px 'DM Mono',monospace;letter-spacing:.12em;color:#F3ECE0;background:#2B44D6;border-radius:999px;padding:5px 12px">PROPOSAL</div>
+    <div style="font:500 9px 'DM Mono',monospace;letter-spacing:.12em;border:2px solid #0E6E5E;color:#0E6E5E;border-radius:999px;padding:4px 11px">TEGOLA-SERVER · LOOKUP API 0.2.0</div>
+  </div>
+  <div style="font-family:'Bricolage Grotesque',sans-serif;font-weight:800;font-size:66px;line-height:.92;letter-spacing:-.045em;margin:16px 0 0;max-width:1100px;text-wrap:balance">A hundred sources, one shape. Every call counted, every answer kept.</div>
+  <div style="font:400 17px/1.65 Archivo,sans-serif;color:#3A2F26;max-width:920px;margin-top:20px;text-wrap:pretty">The Lookup API (barcode, identify, match, works) is what the app sees. Behind it sit 50 to 100 sources, each with its own client generated from its OpenAPI file. <strong>Between the two sits one layer: the DataProvider. It says what a source can do, for which types, how well, at what price, and how long its answers may be kept.</strong> Nothing above it knows a source's name.</div>
+
+  <div style="height:2.5px;background:#17130F;margin:44px 0 26px"></div>
+  <div style="font:500 10px 'DM Mono',monospace;letter-spacing:.18em;color:#8A7F70;margin-bottom:8px">00 · FIVE LAYERS</div>
+  <div style="font-family:'Bricolage Grotesque',sans-serif;font-weight:800;font-size:32px;letter-spacing:-.03em;margin-bottom:18px">The layer we're defining is the third one.</div>
+  <div style="display:flex;flex-direction:column;gap:10px">
+    <sc-for list="{{ layers }}" as="l" hint-placeholder-count="5">
+      <div style="display:grid;grid-template-columns:56px minmax(0,220px) minmax(0,1fr) minmax(0,260px);gap:16px;align-items:center;border:2.5px solid #17130F;border-radius:16px;background:{{ l.bg }};color:{{ l.fg }};padding:14px 18px">
+        <div style="font:800 26px 'Bricolage Grotesque',sans-serif;letter-spacing:-.03em">{{ l.n }}</div>
+        <div style="font:700 15px Archivo,sans-serif">{{ l.t }}</div>
+        <div style="font:400 13px/1.5 Archivo,sans-serif;opacity:.85;text-wrap:pretty">{{ l.b }}</div>
+        <div style="font:500 11px 'DM Mono',monospace;opacity:.7">{{ l.c }}</div>
+      </div>
+    </sc-for>
+  </div>
+
+  <div style="height:2.5px;background:#17130F;margin:52px 0 26px"></div>
+  <div style="font:500 10px 'DM Mono',monospace;letter-spacing:.18em;color:#8A7F70;margin-bottom:8px">01 · THE PROTOCOL</div>
+  <div style="font-family:'Bricolage Grotesque',sans-serif;font-weight:800;font-size:32px;letter-spacing:-.03em;margin-bottom:10px">Providers return evidence, not answers.</div>
+  <div style="font:400 15px/1.6 Archivo,sans-serif;color:#3A2F26;max-width:920px;margin-bottom:20px;text-wrap:pretty">An adapter wraps one generated client and translates its replies into <code style="font-family:'DM Mono',monospace">ProviderRecord</code>s keyed by the type file's field keys. It never ranks, merges or decides. The router merges records from several providers into the API's <code style="font-family:'DM Mono',monospace">Candidate</code>, with <code style="font-family:'DM Mono',monospace">reasons</code> and <code style="font-family:'DM Mono',monospace">sources</code> filled from what each record says.</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,560px),1fr));gap:16px">
+    <div style="border:2.5px solid #17130F;border-radius:18px;background:#0C0A08;color:#F3ECE0;box-shadow:5px 5px 0 #2B44D6;padding:20px 22px;overflow:auto">
+      <div style="font:500 9px 'DM Mono',monospace;letter-spacing:.13em;opacity:.55;margin-bottom:10px">DataProvider.swift</div>
+      <pre style="margin:0;font:400 12px/1.6 'DM Mono',monospace;white-space:pre">{{ codeProtocol }}</pre>
+    </div>
+    <div style="border:2.5px solid #17130F;border-radius:18px;background:#0C0A08;color:#F3ECE0;box-shadow:5px 5px 0 #0E6E5E;padding:20px 22px;overflow:auto">
+      <div style="font:500 9px 'DM Mono',monospace;letter-spacing:.13em;opacity:.55;margin-bottom:10px">ProviderManifest.swift</div>
+      <pre style="margin:0;font:400 12px/1.6 'DM Mono',monospace;white-space:pre">{{ codeManifest }}</pre>
+    </div>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-top:16px">
+    <sc-for list="{{ rules }}" as="r" hint-placeholder-count="4">
+      <div style="border:2.5px solid #17130F;border-radius:16px;background:#fff;padding:16px 18px;display:flex;flex-direction:column;gap:6px">
+        <div style="font:700 14px Archivo,sans-serif">{{ r.t }}</div>
+        <div style="font:400 13px/1.55 Archivo,sans-serif;color:#3A2F26;text-wrap:pretty">{{ r.b }}</div>
+      </div>
+    </sc-for>
+  </div>
+
+  <div style="height:2.5px;background:#17130F;margin:52px 0 26px"></div>
+  <div style="font:500 10px 'DM Mono',monospace;letter-spacing:.18em;color:#8A7F70;margin-bottom:8px">02 · ORGANISING A HUNDRED SOURCES</div>
+  <div style="font-family:'Bricolage Grotesque',sans-serif;font-weight:800;font-size:32px;letter-spacing:-.03em;margin-bottom:10px">Each source is ranked per type, in three tiers.</div>
+  <div style="font:400 15px/1.6 Archivo,sans-serif;color:#3A2F26;max-width:920px;margin-bottom:20px;text-wrap:pretty">A manifest declares tiers; the meter adjusts the order inside a tier from real hit rates. A source can be primary for one type and fallback for another. Example sources below are illustrations, not signed contracts. Pick a type:</div>
+  <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px">
+    <sc-for list="{{ typeTabs }}" as="t" hint-placeholder-count="5">
+      <div onClick="{{ t.on }}" style="cursor:pointer;border:2px solid #17130F;border-radius:999px;padding:6px 14px;font:600 13px Archivo,sans-serif;background:{{ t.bg }};color:{{ t.fg }}">{{ t.t }}</div>
+    </sc-for>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px">
+    <sc-for list="{{ tiers }}" as="tier" hint-placeholder-count="3">
+      <div style="border:2.5px solid #17130F;border-radius:18px;background:#fff;box-shadow:5px 5px 0 {{ tier.c }};padding:18px 20px;display:flex;flex-direction:column;gap:10px">
+        <div style="font:500 9px 'DM Mono',monospace;letter-spacing:.13em;color:{{ tier.c }}">{{ tier.t }}</div>
+        <div style="font:400 12.5px/1.5 Archivo,sans-serif;color:#8A7F70">{{ tier.b }}</div>
+        <sc-for list="{{ tier.items }}" as="p" hint-placeholder-count="2">
+          <div style="display:flex;justify-content:space-between;gap:10px;border-top:1.5px solid #E0D6C4;padding-top:8px">
+            <div style="display:flex;flex-direction:column;gap:2px">
+              <div style="font:700 14px Archivo,sans-serif">{{ p.n }}</div>
+              <div style="font:400 12px Archivo,sans-serif;color:#3A2F26">{{ p.d }}</div>
+            </div>
+            <div style="font:500 11px 'DM Mono',monospace;color:{{ p.cc }};white-space:nowrap">{{ p.cost }}</div>
+          </div>
+        </sc-for>
+      </div>
+    </sc-for>
+  </div>
+  <div style="border:2.5px solid #17130F;border-radius:18px;background:#fff;padding:20px 22px;margin-top:16px">
+    <div style="font:500 9px 'DM Mono',monospace;letter-spacing:.13em;color:#8A7F70;margin-bottom:12px">ONE LOOKUP, STEP BY STEP</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">
+      <sc-for list="{{ steps }}" as="s" hint-placeholder-count="6">
+        <div style="display:flex;flex-direction:column;gap:4px;border-left:2.5px solid #17130F;padding-left:12px">
+          <div style="font:500 11px 'DM Mono',monospace;color:#2B44D6">{{ s.n }}</div>
+          <div style="font:700 13.5px Archivo,sans-serif">{{ s.t }}</div>
+          <div style="font:400 12.5px/1.5 Archivo,sans-serif;color:#3A2F26;text-wrap:pretty">{{ s.b }}</div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <div style="height:2.5px;background:#17130F;margin:52px 0 26px"></div>
+  <div style="font:500 10px 'DM Mono',monospace;letter-spacing:.18em;color:#8A7F70;margin-bottom:8px">03 · METERING AND CACHE</div>
+  <div style="font-family:'Bricolage Grotesque',sans-serif;font-weight:800;font-size:32px;letter-spacing:-.03em;margin-bottom:10px">One ledger row per outbound call. Cache hits are rows too.</div>
+  <div style="font:400 15px/1.6 Archivo,sans-serif;color:#3A2F26;max-width:920px;margin-bottom:20px;text-wrap:pretty">Precision comes from metering at the transport, not in each adapter: a middleware on every generated client writes the row, so a new source can't forget. The provider's own invoice is reconciled against the ledger monthly.</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:16px">
+    <div style="border:2.5px solid #17130F;border-radius:18px;background:#fff;box-shadow:5px 5px 0 #17130F;padding:20px 22px;display:flex;flex-direction:column;gap:8px">
+      <div style="font:500 9px 'DM Mono',monospace;letter-spacing:.13em;color:#8A7F70">LEDGER ROW · provider_calls</div>
+      <sc-for list="{{ ledger }}" as="f" hint-placeholder-count="8">
+        <div style="display:grid;grid-template-columns:140px 1fr;gap:12px;border-bottom:1.5px solid #E0D6C4;padding-bottom:7px">
+          <div style="font:500 12px 'DM Mono',monospace">{{ f.k }}</div>
+          <div style="font:400 12.5px/1.5 Archivo,sans-serif;color:#3A2F26;text-wrap:pretty">{{ f.v }}</div>
+        </div>
+      </sc-for>
+    </div>
+    <div style="border:2.5px solid #17130F;border-radius:18px;background:#fff;box-shadow:5px 5px 0 #0E6E5E;padding:20px 22px;display:flex;flex-direction:column;gap:8px">
+      <div style="font:500 9px 'DM Mono',monospace;letter-spacing:.13em;color:#0E6E5E">THREE CACHES</div>
+      <sc-for list="{{ caches }}" as="c" hint-placeholder-count="3">
+        <div style="display:flex;flex-direction:column;gap:3px;border-bottom:1.5px solid #E0D6C4;padding-bottom:9px">
+          <div style="display:flex;justify-content:space-between;gap:10px">
+            <div style="font:700 14px Archivo,sans-serif">{{ c.t }}</div>
+            <div style="font:500 11px 'DM Mono',monospace;color:#0E6E5E">{{ c.ttl }}</div>
+          </div>
+          <div style="font:400 12.5px/1.5 Archivo,sans-serif;color:#3A2F26;text-wrap:pretty">{{ c.b }}</div>
+        </div>
+      </sc-for>
+      <div style="font:400 12px/1.5 Archivo,sans-serif;color:#8A7F70">TTL is the shorter of our default and the provider's licence (<code style="font-family:'DM Mono',monospace">cachePolicy</code>). A source that forbids storage is marked <code style="font-family:'DM Mono',monospace">.passThrough</code> and is never in the cache.</div>
+    </div>
+  </div>
+  <div style="border:2.5px solid #C2371F;border-radius:16px;background:#FBEDE6;padding:16px 20px;margin-top:16px;display:flex;flex-direction:column;gap:6px">
+    <div style="font:700 14px Archivo,sans-serif;color:#C2371F">Tension with "no accounts" (ADR-0001)</div>
+    <div style="font:400 13px/1.55 Archivo,sans-serif;color:#3A2F26;max-width:1000px;text-wrap:pretty">Cost per user needs something to group by. The only id the server has is the App Attest key, which is per install. Proposal: store <code style="font-family:'DM Mono',monospace">HMAC(keyID, monthly salt)</code>, so rows group within a month but can't be linked across months or to a person. Per-user figures are monthly aggregates by type; raw rows are deleted after 35 days. If the subscription later comes with a StoreKit transaction id, that id can be linked the same way, still with no name.</div>
+  </div>
+
+  <div style="height:2.5px;background:#17130F;margin:52px 0 26px"></div>
+  <div style="font:500 10px 'DM Mono',monospace;letter-spacing:.18em;color:#8A7F70;margin-bottom:8px">04 · PHOTO RECOGNITION</div>
+  <div style="font-family:'Bricolage Grotesque',sans-serif;font-weight:800;font-size:32px;letter-spacing:-.03em;margin-bottom:10px">Recognition is a provider that returns hints, not records.</div>
+  <div style="font:400 15px/1.6 Archivo,sans-serif;color:#3A2F26;max-width:920px;margin-bottom:20px;text-wrap:pretty">A recognizer turns a photo into the same <code style="font-family:'DM Mono',monospace">IdentifyHints</code> the app already sends (title, subtitle, catalogue number, OCR text). Those hints then go through normal routing. When the model moves to the phone, the server just stops receiving photos: the contract doesn't change.</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px">
+    <sc-for list="{{ recog }}" as="r" hint-placeholder-count="3">
+      <div style="border:2.5px solid #17130F;border-radius:18px;background:{{ r.bg }};color:{{ r.fg }};padding:18px 20px;display:flex;flex-direction:column;gap:8px">
+        <div style="font:500 9px 'DM Mono',monospace;letter-spacing:.13em;opacity:.65">{{ r.k }}</div>
+        <div style="font:800 22px 'Bricolage Grotesque',sans-serif;letter-spacing:-.02em">{{ r.t }}</div>
+        <div style="font:400 13px/1.55 Archivo,sans-serif;opacity:.88;text-wrap:pretty">{{ r.b }}</div>
+      </div>
+    </sc-for>
+  </div>
+
+  <div style="height:2.5px;background:#17130F;margin:52px 0 26px"></div>
+  <div style="font:500 10px 'DM Mono',monospace;letter-spacing:.18em;color:#8A7F70;margin-bottom:8px">05 · WHAT A COLLECTOR COSTS</div>
+  <div style="font-family:'Bricolage Grotesque',sans-serif;font-weight:800;font-size:32px;letter-spacing:-.03em;margin-bottom:10px">The shared cache is what makes paid sources affordable.</div>
+  <div style="font:400 15px/1.6 Archivo,sans-serif;color:#3A2F26;max-width:920px;margin-bottom:20px;text-wrap:pretty">A barcode answered once is answered for everyone. So the cost per collector falls as more collectors share a type. Figures are assumptions to replace with real quotes.</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:16px">
+    <div style="border:2.5px solid #17130F;border-radius:18px;background:#fff;box-shadow:5px 5px 0 #17130F;padding:20px 22px;display:flex;flex-direction:column;gap:16px">
+      <sc-for list="{{ sliders }}" as="s" hint-placeholder-count="5">
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div style="display:flex;justify-content:space-between;gap:10px">
+            <div style="font:600 13px Archivo,sans-serif">{{ s.label }}</div>
+            <div style="font:500 13px 'DM Mono',monospace">{{ s.shown }}</div>
+          </div>
+          <input type="range" min="{{ s.min }}" max="{{ s.max }}" step="{{ s.step }}" value="{{ s.value }}" onInput="{{ s.on }}" style="width:100%;accent-color:#2B44D6"></input>
+        </div>
+      </sc-for>
+    </div>
+    <div style="border:2.5px solid #17130F;border-radius:18px;background:#0C0A08;color:#F3ECE0;box-shadow:5px 5px 0 #6E2440;padding:20px 22px;display:flex;flex-direction:column;gap:10px">
+      <div style="font:500 9px 'DM Mono',monospace;letter-spacing:.13em;opacity:.55">PER COLLECTOR · PER YEAR</div>
+      <div style="font:800 64px 'Bricolage Grotesque',sans-serif;letter-spacing:-.04em;line-height:1">{{ out.total }}</div>
+      <sc-for list="{{ out.rows }}" as="r" hint-placeholder-count="4">
+        <div style="display:flex;justify-content:space-between;gap:12px;border-bottom:1.5px solid #3A2F26;padding-bottom:8px">
+          <div style="font:400 13px Archivo,sans-serif;opacity:.85">{{ r.k }}</div>
+          <div style="font:500 13px 'DM Mono',monospace">{{ r.v }}</div>
+        </div>
+      </sc-for>
+      <div style="font:700 14px/1.5 Archivo,sans-serif;color:{{ out.vc }};margin-top:4px">{{ out.verdict }}</div>
+    </div>
+  </div>
+
+  <div style="height:2.5px;background:#17130F;margin:52px 0 26px"></div>
+  <div style="font:500 10px 'DM Mono',monospace;letter-spacing:.18em;color:#8A7F70;margin-bottom:8px">06 · WHO PAYS FOR A PAID SOURCE</div>
+  <div style="font-family:'Bricolage Grotesque',sans-serif;font-weight:800;font-size:32px;letter-spacing:-.03em;margin-bottom:18px">Absorb it under a ceiling; charge a type pack above it.</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px">
+    <sc-for list="{{ payOpts }}" as="o" hint-placeholder-count="3">
+      <div style="border:2.5px solid #17130F;border-radius:18px;background:#fff;box-shadow:5px 5px 0 {{ o.c }};padding:18px 20px;display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <div style="font:800 22px 'Bricolage Grotesque',sans-serif;letter-spacing:-.02em">{{ o.t }}</div>
+          <div style="font:500 9px 'DM Mono',monospace;letter-spacing:.12em;color:{{ o.c }}">{{ o.tag }}</div>
+        </div>
+        <div style="font:400 13px/1.55 Archivo,sans-serif;color:#3A2F26;text-wrap:pretty">{{ o.b }}</div>
+      </div>
+    </sc-for>
+  </div>
+  <div style="border:2.5px solid #17130F;border-radius:16px;background:#fff;padding:18px 20px;margin-top:16px">
+    <div style="font:500 9px 'DM Mono',monospace;letter-spacing:.13em;color:#8A7F70;margin-bottom:10px">OPEN QUESTIONS</div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <sc-for list="{{ openQs }}" as="q" hint-placeholder-count="4">
+        <div style="font:400 13.5px/1.55 Archivo,sans-serif;color:#3A2F26;text-wrap:pretty">{{ q }}</div>
+      </sc-for>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { type: 'wine', users: 2000, lookups: 15, miss: 25, perCall: 4, fixed: 99 };
+  renderVals() {
+    const s = this.state, set = (k) => (e) => this.setState({ [k]: Number(e.target.value) });
+    const T = {
+      music: { primary: [['MusicBrainz','Barcode, catalogue no., tracklist','free','#0E6E5E'],['Discogs','Pressings, labels, matrix','free · rate-limited','#0E6E5E']], secondary: [['Cover Art Archive','Front/back images','free','#0E6E5E']] },
+      'video-game': { primary: [['IGDB','Titles, platforms, regions','free · attribution','#0E6E5E'],['Retro box scans','Box art by platform','free','#0E6E5E']], secondary: [['ScreenScraper','Media, ROM-set ids','donation tier','#8A5A00']] },
+      wine: { primary: [['Wine source (paid)','Producer, vintage, appellation','€ per call + plan','#C2371F']], secondary: [['Open Food Facts','Barcode → bottle label','free','#0E6E5E']] },
+      'board-games': { primary: [['BoardGameGeek','Editions, designers, players','free · licence','#0E6E5E']], secondary: [['UPC database','Barcode → title','free tier','#8A5A00']] },
+      books: { primary: [['Open Library','ISBN, editions, covers','free','#0E6E5E']], secondary: [['Google Books','ISBN, descriptions','free quota','#8A5A00']] }
+    };
+    const fb = [['Wikidata','Works, external ids','free','#0E6E5E'],['General barcode DB','Any EAN → title','€ per call','#C2371F'],['Recognizer','Photo → hints','compute','#8A5A00']];
+    const cur = T[s.type];
+    const mk = (a) => a.map(([n,d,cost,cc]) => ({ n, d, cost, cc }));
+    const tiers = [
+      { t: 'PRIMARY · ASKED FIRST', b: 'Specialist for this type. Asked in parallel.', c: '#2B44D6', items: mk(cur.primary) },
+      { t: 'SECONDARY · IF CONFIDENCE < 0.9', b: 'Fills gaps: images, missing fields, a second opinion.', c: '#0E6E5E', items: mk(cur.secondary) },
+      { t: 'FALLBACK · ALL TYPES', b: 'General sources, asked only when the rest came back empty.', c: '#8A7F70', items: mk(fb) }
+    ];
+    const labels = { music: 'Music', 'video-game': 'Video games', wine: 'Wine', 'board-games': 'Board games', books: 'Books' };
+    const typeTabs = Object.keys(T).map(k => ({ t: labels[k], on: () => this.setState({ type: k }), bg: s.type === k ? '#17130F' : '#fff', fg: s.type === k ? '#F3ECE0' : '#17130F' }));
+
+    const variable = s.lookups * 12 * (s.miss / 100) * (s.perCall / 1000);
+    const fixed = (s.fixed * 12) / s.users;
+    const total = variable + fixed;
+    const share = 50 * 0.15;
+    const eur = (v) => '€' + v.toFixed(2);
+    const out = {
+      total: eur(total),
+      rows: [
+        { k: 'Calls that reach the source', v: Math.round(s.lookups * 12 * s.miss / 100) + ' / yr' },
+        { k: 'Per-call cost', v: eur(variable) },
+        { k: 'Plan fee shared by ' + s.users + ' collectors', v: eur(fixed) },
+        { k: 'Data budget in a €50 subscription (15%)', v: eur(share) }
+      ],
+      verdict: total <= share ? 'Fits inside the subscription. Absorb it.' : total <= share * 2 ? 'Over budget. Cap free lookups or wait for more collectors.' : 'Needs a type pack: about ' + eur(Math.ceil(total * 1.4)) + ' / year covers it with Apple\'s cut.',
+      vc: total <= share ? '#7FD6B8' : total <= share * 2 ? '#F2C14E' : '#FF8A6B'
+    };
+    const sliders = [
+      { label: 'Collectors focused on this type', min: 100, max: 50000, step: 100, value: s.users, shown: s.users.toLocaleString('en'), on: set('users') },
+      { label: 'Lookups per collector per month', min: 1, max: 100, step: 1, value: s.lookups, shown: s.lookups, on: set('lookups') },
+      { label: 'Cache miss rate', min: 2, max: 100, step: 1, value: s.miss, shown: s.miss + '%', on: set('miss') },
+      { label: 'Price per call (€ per 1,000)', min: 0, max: 30, step: 0.5, value: s.perCall, shown: '€' + s.perCall, on: set('perCall') },
+      { label: 'Fixed plan (€ per month)', min: 0, max: 1000, step: 10, value: s.fixed, shown: '€' + s.fixed, on: set('fixed') }
+    ];
+
+    return {
+      layers: [
+        { n: '1', t: 'Lookup API', b: 'tegola-lookup.openapi.yaml. What the app calls. Knows types, never sources.', c: 'Vapor routes · generated server stubs', bg: '#fff', fg: '#17130F' },
+        { n: '2', t: 'Router', b: 'Picks providers per type and capability, checks cache and budget, merges records into Candidates.', c: 'LookupRouter', bg: '#fff', fg: '#17130F' },
+        { n: '3', t: 'DataProvider', b: 'One adapter per source. Declares a manifest, returns ProviderRecords. The layer defined here.', c: 'protocol DataProvider', bg: '#2B44D6', fg: '#F3ECE0' },
+        { n: '4', t: 'Generated client', b: 'One Swift package per source, from its OpenAPI file. Hand-written OpenAPI file when the source has none.', c: 'swift-openapi-generator', bg: '#fff', fg: '#17130F' },
+        { n: '5', t: 'Transport + middleware', b: 'Shared by every client: metering, rate limits, retries, timeouts, secrets.', c: 'ClientMiddleware chain', bg: '#0C0A08', fg: '#F3ECE0' }
+      ],
+      codeProtocol: `public protocol DataProvider: Sendable {
+  static var manifest: ProviderManifest { get }
+
+  func lookup(_ q: ProviderQuery,
+              ctx: CallContext) async throws -> [ProviderRecord]
+
+  // Optional: fetch one record by its id
+  // in this source (re-match, refresh).
+  func fetch(_ id: ExternalID,
+             ctx: CallContext) async throws -> ProviderRecord?
+}
+
+public enum ProviderQuery: Sendable, Hashable {
+  case barcode(String, Symbology?)
+  case catalogueNumber(String)
+  case text(IdentifyHints)     // title, subtitle, OCR
+  case image(JPEGData)         // recognizers only
+  case work(ExternalID)
+}
+
+public struct ProviderRecord: Sendable {
+  var provider: ProviderID
+  var externalIDs: [String: String]   // "musicbrainz": "…"
+  var typeID: TypeID
+  var subtype: SubtypeKey?
+  var title: String?
+  var subtitle: String?
+  var year: Int?
+  var fields: [FieldKey: FieldValue]  // type-file keys
+  var entries: [FieldKey: [[String: JSONValue]]]
+  var images: [ImageRef]
+  var matchedOn: Set<Reason.Kind>     // barcode, title…
+  var score: Double                   // provider's own 0…1
+  var attribution: Attribution?
+}
+
+public struct CallContext: Sendable {
+  var requestID: UUID
+  var payer: PayerBucket      // HMAC(keyID, month)
+  var typeFocus: TypeID
+  var budget: BudgetGuard     // throws .overBudget
+  var deadline: ContinuousClock.Instant
+}`,
+      codeManifest: `public struct ProviderManifest: Sendable {
+  var id: ProviderID               // "discogs"
+  var displayName: String
+  var capabilities: Set<Capability>
+  var coverage: [TypeID: Coverage] // "*" = fallback
+  var cost: CostModel
+  var limits: RateLimit
+  var cachePolicy: CachePolicy
+  var attribution: Attribution?
+  var regions: Set<Region>?        // PAL-strong, JP-strong…
+}
+
+public enum Capability: Sendable {
+  case barcode, catalogueNumber, text,
+       image, works, images, prices
+}
+
+public struct Coverage: Sendable {
+  var tier: Tier                   // .primary .secondary .fallback
+  var subtypes: Set<SubtypeKey>?   // nil = all
+  var fields: Set<FieldKey>        // what it can fill
+}
+
+public enum CostModel: Sendable {
+  case free
+  case perCall(micros: Int)                 // € × 10⁻⁶
+  case plan(monthly: Int, included: Int,
+            overageMicros: Int)
+  case perOperation([Capability: Int])
+}
+
+public enum CachePolicy: Sendable {
+  case store(maxAge: Duration)
+  case storeIDsOnly                 // keep ids, refetch data
+  case passThrough                  // licence forbids storing
+}`,
+      rules: [
+        { t: 'Field keys come from the type file', b: 'Adapters map to video-game.yml, video-media.yml, wine.yml keys. A key the type doesn\'t declare is dropped by the router, same rule as the app.' },
+        { t: 'Adapters never call each other', b: 'Chaining (barcode in source A, then details in source B by A\'s id) is the router\'s job, using externalIDs. Keeps each adapter testable alone.' },
+        { t: 'Manifests are data, adapters are code', b: 'Tier, cost and TTL live in a YAML per provider, loaded at boot and editable without a deploy. The Swift manifest is its decoded form.' },
+        { t: 'A provider can be switched off live', b: 'Kill switch per provider and per type. When a source breaks or a bill spikes, the router skips it and falls back.' }
+      ],
+      typeTabs, tiers,
+      steps: [
+        { n: '1', t: 'Normalise', b: 'Barcode to GTIN-14, text lowercased and trimmed. This string is the cache key.' },
+        { n: '2', t: 'Cache', b: 'Answer cache hit: return, write a hit row. Done in most cases.' },
+        { n: '3', t: 'Select', b: 'Providers with the capability and coverage for this type and subtype, minus switched-off and over-budget ones.' },
+        { n: '4', t: 'Primary in parallel', b: 'Fan out with a deadline (1.5 s). Stop early if a record matched on barcode with score ≥ 0.9.' },
+        { n: '5', t: 'Fill and fall back', b: 'Secondary fills missing fields; fallback only if nothing came back.' },
+        { n: '6', t: 'Merge', b: 'Group records by externalID overlap, merge fields by provider rank, build Candidate with reasons and sources.' }
+      ],
+      ledger: [
+        { k: 'at', v: 'Timestamp' },
+        { k: 'provider · op', v: 'discogs · barcode' },
+        { k: 'type · subtype', v: 'music · vinyl' },
+        { k: 'outcome', v: 'cacheHit · hit · empty · error · timeout · rateLimited' },
+        { k: 'cost_micros', v: 'From the CostModel at call time. 0 for hits and free sources.' },
+        { k: 'latency_ms', v: 'For ranking inside a tier and for alerts' },
+        { k: 'payer', v: 'HMAC(keyID, monthly salt). Never the key itself.' },
+        { k: 'request_id', v: 'Groups the fan-out of one lookup' }
+      ],
+      caches: [
+        { t: 'Answer cache', ttl: '7–30 days', b: 'Normalised query → merged Candidates. Shared by all collectors. Matches the API\'s public Cache-Control on barcodes.' },
+        { t: 'Record cache', ttl: 'per licence', b: 'Provider + externalID → ProviderRecord. Lets a re-merge or a refresh run without calling out.' },
+        { t: 'Negative cache', ttl: '24 h', b: '"This source doesn\'t know this barcode." Stops the same miss being paid for again.' }
+      ],
+      recog: [
+        { k: 'NOW · SERVER', t: 'Recognizer as a provider', b: 'Capability .image, coverage per type. Returns IdentifyHints plus a score. A VLM reads the label; a vector index of known covers suggests a release id. The photo is dropped after the answer, as the API promises.', bg: '#fff', fg: '#17130F' },
+        { k: 'METERED LIKE ANY OTHER', t: 'Compute is a cost', b: 'GPU seconds go in the ledger as cost_micros, so a photo lookup has a price per type, same as a paid source. Photo lookups are the most expensive row; they are never cached.', bg: '#fff', fg: '#17130F' },
+        { k: 'LATER · ON DEVICE', t: 'Same hints, from the phone', b: 'A local model plus a downloaded index per type produces the hints on the phone. The server sees identify calls with no image, and the cost row disappears.', bg: '#0C0A08', fg: '#F3ECE0' }
+      ],
+      sliders, out,
+      payOpts: [
+        { t: 'Absorb', tag: 'DEFAULT', c: '#0E6E5E', b: 'Every type whose cost per collector stays under 15% of the subscription (€7.50/yr) is included. The free tier gets a monthly lookup cap per type, so free users can\'t run up a paid source.' },
+        { t: 'Type pack', tag: 'ABOVE THE CEILING', c: '#2B44D6', b: 'A yearly in-app purchase per expensive type ("Wine data", priced from the calculator). Only collectors who use that type pay for it; music collectors never see it.' },
+        { t: 'Lookup credits', tag: 'NOT RECOMMENDED', c: '#C2371F', b: 'Pay per lookup. Precise, but it puts a meter in front of every scan, which works against "the app owns the verbs".' }
+      ],
+      openQs: [
+        'Is the per-month HMAC grouping acceptable under ADR-0001, or should cost per user only ever be estimated from aggregates per type?',
+        'Which types have a paid source at all today? If only wine, the type pack can wait.',
+        'Can tegola-server ship one Swift package per provider in a single repo, or should clients live in their own repo to keep build times down?',
+        'Do the recognizer and the on-device model share one cover index, so the server version trains the phone version?'
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

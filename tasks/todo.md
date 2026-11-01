@@ -49,6 +49,19 @@ Plan: `tasks/plan.md`, M3. Report: `docs/milestones/M3.md`. Sources chosen by th
 - [x] Separate review agents over M3: two rounds, every finding fixed (`tasks/M3-review.md`)
 - [ ] Owner: register the keys (D-22); then re-record the fixtures from the live APIs
 
+## M5 · providers
+
+Plan: `tasks/plan.md`, M5. Decision: D-27 (the owner's proposal, `docs/proposals/data-providers.dc.html`).
+
+- [x] T5.1 D-27; "supplier" is "provider" in code
+- [x] T5.2 Records and the router: `ProviderRecord`, `Ranking`, `RecordMerge`
+- [ ] T5.3 Manifests (YAML per provider, checked at start-up)
+- [ ] T5.4 Caches by licence, in Postgres
+- [ ] T5.5 Ledger, budget guard, kill switch
+- [ ] T5.6 Recognizer protocol (when an image source is chosen)
+- [ ] T5.7 Docs, report, review agent
+- [ ] tegola: the product half (sections 05–06) recorded as a proposal for the owner
+
 ## Open follow-ups
 
 - [x] Cover art for music from the Cover Art Archive, without an extra request (D-25)
