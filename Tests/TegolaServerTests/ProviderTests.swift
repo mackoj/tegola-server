@@ -20,8 +20,8 @@ func query(_ request: OutboundRequest, _ name: String) -> String? {
 }
 
 @Suite struct MusicBrainzTests {
-  func source(_ transport: ReplayTransport) -> MusicBrainzSupplier {
-    MusicBrainzSupplier(
+  func source(_ transport: ReplayTransport) -> MusicBrainzProvider {
+    MusicBrainzProvider(
       connection: testConnection("musicbrainz", transport),
       userAgent: "tegola-server/1.0 ( ops@example.com )"
     )
@@ -108,8 +108,8 @@ func query(_ request: OutboundRequest, _ name: String) -> String? {
 }
 
 @Suite struct IGDBTests {
-  func source(_ transport: ReplayTransport) -> IGDBSupplier {
-    IGDBSupplier(
+  func source(_ transport: ReplayTransport) -> IGDBProvider {
+    IGDBProvider(
       connection: testConnection("igdb", transport),
       tokens: TwitchTokens(
         clientID: "client-id",
@@ -181,7 +181,7 @@ func query(_ request: OutboundRequest, _ name: String) -> String? {
       ("id.twitch.tv", [ok(Fixture.twitchToken)]), ("api.igdb.com", [status(401), ok(Fixture.igdbGames)]),
     ])
     // A token old enough to have expired early: minimumAge zero stands for "older than a minute".
-    let igdb = IGDBSupplier(
+    let igdb = IGDBProvider(
       connection: testConnection("igdb", transport),
       tokens: TwitchTokens(
         clientID: "client-id",
@@ -218,8 +218,8 @@ func query(_ request: OutboundRequest, _ name: String) -> String? {
 }
 
 @Suite struct ScreenScraperTests {
-  func source(_ transport: ReplayTransport) -> ScreenScraperSupplier {
-    ScreenScraperSupplier(
+  func source(_ transport: ReplayTransport) -> ScreenScraperProvider {
+    ScreenScraperProvider(
       connection: testConnection("screenscraper", transport),
       credentials: .init(developerID: "dev", developerPassword: "TEGOLA-TEST-SENTINEL-dev")
     )
@@ -252,15 +252,15 @@ func query(_ request: OutboundRequest, _ name: String) -> String? {
 
   @Test func theDailyQuotaIsABusySourceForAnHour() async throws {
     let transport = ReplayTransport([("api.screenscraper.fr", status(430))])
-    await #expect(throws: SupplierFailure.busy(retryAfter: 3600)) {
+    await #expect(throws: ProviderFailure.busy(retryAfter: 3600)) {
       _ = try await source(transport).search(.init(title: "Sonic", limit: 5, reason: .title))
     }
   }
 }
 
 @Suite struct BoardGameGeekTests {
-  func source(_ transport: ReplayTransport) -> BoardGameGeekSupplier {
-    BoardGameGeekSupplier(connection: testConnection("boardgamegeek", transport), token: "TEGOLA-TEST-SENTINEL-bgg")
+  func source(_ transport: ReplayTransport) -> BoardGameGeekProvider {
+    BoardGameGeekProvider(connection: testConnection("boardgamegeek", transport), token: "TEGOLA-TEST-SENTINEL-bgg")
   }
 
   @Test func searchReadsTheBestGamesDetails() async throws {
@@ -293,20 +293,20 @@ func query(_ request: OutboundRequest, _ name: String) -> String? {
   }
 
   @Test func playersReadsLikeTheTypeFile() {
-    #expect(BoardGameGeekSupplier.players(minimum: 2, maximum: 4) == "2–4")
-    #expect(BoardGameGeekSupplier.players(minimum: 2, maximum: 2) == "2")
-    #expect(BoardGameGeekSupplier.players(minimum: 0, maximum: 0) == nil)
+    #expect(BoardGameGeekProvider.players(minimum: 2, maximum: 4) == "2–4")
+    #expect(BoardGameGeekProvider.players(minimum: 2, maximum: 2) == "2")
+    #expect(BoardGameGeekProvider.players(minimum: 0, maximum: 0) == nil)
   }
 }
 
 /// A source that answers or fails as told, and counts its calls.
-final class ScriptedSupplier: DataSupplier, @unchecked Sendable {
+final class ScriptedProvider: DataProvider, @unchecked Sendable {
   let name: String
   let typeID: String
   let idPrefix: String
   let answersBarcodes = true
-  let tier: SupplierTier
-  var failure: SupplierFailure?
+  let tier: ProviderTier
+  var failure: ProviderFailure?
   var answer: [Components.Schemas.Candidate]
   private let lock = NSLock()
   private var count = 0
@@ -314,9 +314,9 @@ final class ScriptedSupplier: DataSupplier, @unchecked Sendable {
   init(
     _ name: String,
     typeID: String = "music",
-    tier: SupplierTier = .primary,
+    tier: ProviderTier = .primary,
     answer: [Components.Schemas.Candidate] = [],
-    failure: SupplierFailure? = nil
+    failure: ProviderFailure? = nil
   ) {
     self.name = name
     self.typeID = typeID
@@ -328,35 +328,35 @@ final class ScriptedSupplier: DataSupplier, @unchecked Sendable {
 
   var calls: Int { lock.withLock { count } }
 
-  func respond() throws(SupplierFailure) -> [Components.Schemas.Candidate] {
+  func respond() throws(ProviderFailure) -> [Components.Schemas.Candidate] {
     lock.withLock { count += 1 }
     if let failure { throw failure }
     return answer
   }
 
-  func barcode(_ query: BarcodeQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] { try respond() }
-  func search(_ query: SupplierQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] { try respond() }
-  func work(id: String) async throws(SupplierFailure) -> Components.Schemas.Work? {
+  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate] { try respond() }
+  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate] { try respond() }
+  func work(id: String) async throws(ProviderFailure) -> Components.Schemas.Work? {
     _ = try respond()
     return .init(workID: id, title: "w", releases: [])
   }
 }
 
-@Suite struct SuppliersLookupServiceTests {
+@Suite struct LookupRouterTests {
   let barcodeQuery = BarcodeQuery(typeID: "music", code: "724385522925")
 
   @Test func aFailingSourceDoesntHideTheOthers() async throws {
-    let good = ScriptedSupplier("a", answer: [candidate("a:1", confidence: 0.9)])
-    let bad = ScriptedSupplier("b", failure: .failed("network"))
-    let service = SuppliersLookupService(sources: [good, bad])
+    let good = ScriptedProvider("a", answer: [candidate("a:1", confidence: 0.9)])
+    let bad = ScriptedProvider("b", failure: .failed("network"))
+    let service = LookupRouter(sources: [good, bad])
     let candidates = try await service.barcode(barcodeQuery)
     #expect(candidates.map(\.releaseID) == ["a:1"])
   }
 
   @Test func whenEverySourceFailsTheLookupIsUnavailableWithTheSoonestRetry() async throws {
-    let service = SuppliersLookupService(sources: [
-      ScriptedSupplier("a", failure: .busy(retryAfter: 90)),
-      ScriptedSupplier("b", failure: .circuitOpen(retryAfter: 12)),
+    let service = LookupRouter(sources: [
+      ScriptedProvider("a", failure: .busy(retryAfter: 90)),
+      ScriptedProvider("b", failure: .circuitOpen(retryAfter: 12)),
     ])
     do {
       _ = try await service.barcode(barcodeQuery)
@@ -367,28 +367,28 @@ final class ScriptedSupplier: DataSupplier, @unchecked Sendable {
   }
 
   @Test func answersAreCachedAndFailuresAreNot() async throws {
-    let source = ScriptedSupplier("a", answer: [candidate("a:1", confidence: 0.9)])
-    let service = SuppliersLookupService(sources: [source])
+    let source = ScriptedProvider("a", answer: [candidate("a:1", confidence: 0.9)])
+    let service = LookupRouter(sources: [source])
     _ = try await service.barcode(barcodeQuery)
     _ = try await service.barcode(barcodeQuery)
     #expect(source.calls == 1)
 
-    let failing = ScriptedSupplier("b", failure: .failed("network"))
-    let other = SuppliersLookupService(sources: [failing])
+    let failing = ScriptedProvider("b", failure: .failed("network"))
+    let other = LookupRouter(sources: [failing])
     _ = try? await other.barcode(barcodeQuery)
     _ = try? await other.barcode(barcodeQuery)
     #expect(failing.calls == 2)
   }
 
   @Test func aTypeWithoutSourcesAnswersNothingAndIsntListed() async throws {
-    let service = SuppliersLookupService(sources: [ScriptedSupplier("a")])
+    let service = LookupRouter(sources: [ScriptedProvider("a")])
     #expect(service.supportedTypes == ["music"])
     #expect(try await service.barcode(.init(typeID: "thing", code: "12345678")).isEmpty)
   }
 
   @Test func aWorkGoesToTheSourceOwningItsPrefix() async throws {
-    let a = ScriptedSupplier("a")
-    let service = SuppliersLookupService(sources: [a, ScriptedSupplier("b", typeID: "video-game")])
+    let a = ScriptedProvider("a")
+    let service = LookupRouter(sources: [a, ScriptedProvider("b", typeID: "video-game")])
     #expect(try await service.work(id: "a:42")?.workID == "a:42")
     #expect(try await service.work(id: "zzz:42") == nil)
     _ = try await service.work(id: "a:42")
@@ -396,8 +396,8 @@ final class ScriptedSupplier: DataSupplier, @unchecked Sendable {
   }
 
   @Test func identifyWithOCRTextSaysSo() async throws {
-    let source = RecordingSupplier()
-    let service = SuppliersLookupService(sources: [source])
+    let source = RecordingProvider()
+    let service = LookupRouter(sources: [source])
     _ = try await service.identify(typeID: "music", .init(text: "\n  OK COMPUTER \nRADIOHEAD\nparlophone\nextra"))
     let asked = try #require(source.queries.first)
     #expect(asked.title == "OK COMPUTER RADIOHEAD parlophone")
@@ -405,27 +405,27 @@ final class ScriptedSupplier: DataSupplier, @unchecked Sendable {
   }
 }
 
-final class RecordingSupplier: DataSupplier, @unchecked Sendable {
+final class RecordingProvider: DataProvider, @unchecked Sendable {
   let name = "rec"
   let typeID = "music"
   let idPrefix = "rec:"
   let answersBarcodes = true
   private let lock = NSLock()
-  private var asked: [SupplierQuery] = []
-  var queries: [SupplierQuery] { lock.withLock { asked } }
+  private var asked: [SearchQuery] = []
+  var queries: [SearchQuery] { lock.withLock { asked } }
 
-  func barcode(_ query: BarcodeQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] { [] }
-  func search(_ query: SupplierQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] {
+  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate] { [] }
+  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate] {
     lock.withLock { asked.append(query) }
     return []
   }
-  func work(id: String) async throws(SupplierFailure) -> Components.Schemas.Work? { nil }
+  func work(id: String) async throws(ProviderFailure) -> Components.Schemas.Work? { nil }
 }
 
-@Suite struct SupplierConnectionTests {
+@Suite struct ProviderConnectionTests {
   @Test func aProviderSaying429IsBusyWithItsRetryAfter() async throws {
     let connection = testConnection("x", ReplayTransport([("example", status(429, headers: ["retry-after": "17"]))]))
-    await #expect(throws: SupplierFailure.busy(retryAfter: 17)) {
+    await #expect(throws: ProviderFailure.busy(retryAfter: 17)) {
       _ = try await connection.exchange(.init(url: URL(string: "https://example.org")!))
     }
   }
@@ -446,7 +446,7 @@ final class RecordingSupplier: DataSupplier, @unchecked Sendable {
   @Test func thePacerRefusesInsteadOfQueueingTooLong() async throws {
     let pacer = Pacer(interval: .seconds(60), maximumWait: .seconds(1))
     try await pacer.acquire()
-    await #expect(throws: SupplierFailure.self) { try await pacer.acquire() }
+    await #expect(throws: ProviderFailure.self) { try await pacer.acquire() }
   }
 
   /// A failure logs the source and a reason code; never the URL, the query or a credential.
@@ -548,7 +548,7 @@ final class RecordingSupplier: DataSupplier, @unchecked Sendable {
 }
 
 /// The sources behind the real routes: an attested barcode lookup reaches MusicBrainz and answers its candidates.
-@Suite struct SupplierRouteTests {
+@Suite struct ProviderRouteTests {
   @Test func aBarcodeLookupAnswersMusicBrainzsCandidates() async throws {
     let transport = ReplayTransport([("musicbrainz.org", ok(Fixture.musicBrainzBarcode))])
     let lookups = makeLookupService(
@@ -577,7 +577,7 @@ final class RecordingSupplier: DataSupplier, @unchecked Sendable {
 
 // MARK: - the review's findings (tasks/M3-review.md), each sent as the attack or failure it describes
 
-@Suite struct SupplierReviewTests {
+@Suite struct ProviderReviewTests {
   /// Finding 1: an import row's year can't overflow the ranking. The contract gives it no range, so the row is
   /// answered and its year dropped, not refused (second review).
   @Test func anExtremeYearIsDroppedAndCantOverflowTheRanking() async throws {
@@ -590,8 +590,8 @@ final class RecordingSupplier: DataSupplier, @unchecked Sendable {
       )
       #expect(status == .ok, "year \(year)")
     }
-    let recorder = RecordingSupplier()
-    let service = SuppliersLookupService(sources: [recorder])
+    let recorder = RecordingProvider()
+    let service = LookupRouter(sources: [recorder])
     _ = try await service.match(typeID: "music", .init(ref: "r", title: "x", year: .min))
     #expect(recorder.queries.first?.year == nil)
     let confidence = TextMatch.confidence(
@@ -605,10 +605,10 @@ final class RecordingSupplier: DataSupplier, @unchecked Sendable {
     #expect(confidence == 1)
   }
 
-  /// Finding 2: one supplier failing while the other finds nothing is "try again", not "no match".
+  /// Finding 2: one provider failing while the other finds nothing is "try again", not "no match".
   @Test func aFailureBesideAnEmptyAnswerIsUnavailable() async throws {
-    let service = SuppliersLookupService(sources: [
-      ScriptedSupplier("a", failure: .busy(retryAfter: 40)), ScriptedSupplier("b", answer: []),
+    let service = LookupRouter(sources: [
+      ScriptedProvider("a", failure: .busy(retryAfter: 40)), ScriptedProvider("b", answer: []),
     ])
     do {
       _ = try await service.barcode(.init(typeID: "music", code: "724385522925"))
@@ -620,24 +620,24 @@ final class RecordingSupplier: DataSupplier, @unchecked Sendable {
 
   /// Finding 3: an error page answered with 200 is a failure, not an empty answer.
   @Test func anErrorPageIsAFailureNotNoMatch() async throws {
-    let bgg = BoardGameGeekSupplier(
+    let bgg = BoardGameGeekProvider(
       connection: testConnection(
         "boardgamegeek",
         ReplayTransport([("xmlapi2", ok("<html><body>Down for maintenance</body></html>", contentType: "text/html"))])
       ),
       token: "TEGOLA-TEST-SENTINEL"
     )
-    await #expect(throws: SupplierFailure.failed("undecodable")) {
+    await #expect(throws: ProviderFailure.failed("undecodable")) {
       _ = try await bgg.search(.init(title: "Agricola", limit: 5, reason: .title))
     }
-    let screenScraper = ScreenScraperSupplier(
+    let screenScraper = ScreenScraperProvider(
       connection: testConnection(
         "screenscraper",
         ReplayTransport([("api.screenscraper.fr", ok(#"{"header":{"success":"false","error":"Erreur"}}"#))])
       ),
       credentials: .init(developerID: "dev", developerPassword: "TEGOLA-TEST-SENTINEL")
     )
-    await #expect(throws: SupplierFailure.failed("undecodable")) {
+    await #expect(throws: ProviderFailure.failed("undecodable")) {
       _ = try await screenScraper.search(.init(title: "Sonic", limit: 5, reason: .title))
     }
   }
@@ -655,13 +655,13 @@ final class RecordingSupplier: DataSupplier, @unchecked Sendable {
     """,
   ])
   func entityDeclarationsAreRefused(_ answer: String) async throws {
-    #expect(BoardGameGeekSupplier.parse(Data(answer.utf8)) == nil)
+    #expect(BoardGameGeekProvider.parse(Data(answer.utf8)) == nil)
     let transport = ReplayTransport([("xmlapi2/search", xml(Fixture.bggSearch)), ("xmlapi2/thing", xml(answer))])
-    let bgg = BoardGameGeekSupplier(
+    let bgg = BoardGameGeekProvider(
       connection: testConnection("boardgamegeek", transport),
       token: "TEGOLA-TEST-SENTINEL"
     )
-    await #expect(throws: SupplierFailure.failed("undecodable")) {
+    await #expect(throws: ProviderFailure.failed("undecodable")) {
       _ = try await bgg.search(.init(title: "Agricola", limit: 5, reason: .title))
     }
   }
@@ -671,21 +671,21 @@ final class RecordingSupplier: DataSupplier, @unchecked Sendable {
     let transport = ReplayTransport([
       ("xmlapi2", status(302, headers: ["location": "http://attacker.example/steal"])), ("attacker", xml("<items/>")),
     ])
-    let bgg = BoardGameGeekSupplier(
+    let bgg = BoardGameGeekProvider(
       connection: testConnection("boardgamegeek", transport),
       token: "TEGOLA-TEST-SENTINEL"
     )
-    await #expect(throws: SupplierFailure.failed("redirect")) {
+    await #expect(throws: ProviderFailure.failed("redirect")) {
       _ = try await bgg.search(.init(title: "Agricola", limit: 5, reason: .title))
     }
     #expect(transport.sent.count == 1)
     #expect(transport.sent.allSatisfy { $0.url.host == "boardgamegeek.com" })
   }
 
-  /// Finding 6: each supplier's answer is cut to its best 10 before it's cached.
-  @Test func eachSuppliersAnswerIsCutToItsBestTen() async throws {
+  /// Finding 6: each provider's answer is cut to its best 10 before it's cached.
+  @Test func eachProvidersAnswerIsCutToItsBestTen() async throws {
     let many = (0..<30).map { candidate("a:\($0)", confidence: Double($0) / 100) }
-    let service = SuppliersLookupService(sources: [ScriptedSupplier("a", answer: many)])
+    let service = LookupRouter(sources: [ScriptedProvider("a", answer: many)])
     let answer = try await service.barcode(.init(typeID: "music", code: "724385522925"))
     #expect(answer.count == 10)
     #expect(answer.first?.releaseID == "a:29")
@@ -698,7 +698,7 @@ final class RecordingSupplier: DataSupplier, @unchecked Sendable {
       [("id.twitch.tv", [ok(Fixture.twitchToken)]), ("api.igdb.com", [ok("[]")])],
       delays: ["id.twitch.tv": .milliseconds(200)]
     )
-    let igdb = IGDBSupplier(
+    let igdb = IGDBProvider(
       connection: testConnection("igdb", transport),
       tokens: TwitchTokens(
         clientID: "client-id",
@@ -717,14 +717,14 @@ final class RecordingSupplier: DataSupplier, @unchecked Sendable {
 
   /// Low: any whitespace around a Lucene operator keeps it a word.
   @Test func luceneOperatorsStayWordsAcrossAnyWhitespace() {
-    #expect(MusicBrainzSupplier.escape("a\tOR\u{3000}b\nNOT c") == "a or b not c")
+    #expect(MusicBrainzProvider.escape("a\tOR\u{3000}b\nNOT c") == "a or b not c")
   }
 
   /// Low: a "+" in the words reaches the provider as "+", not as a space.
   @Test func aPlusIsEncoded() async throws {
     let transport = ReplayTransport([("musicbrainz.org", ok(#"{"releases":[]}"#))])
-    let supplier = MusicBrainzSupplier(connection: testConnection("musicbrainz", transport), userAgent: "t")
-    _ = try await supplier.search(.init(title: "C++", limit: 5, reason: .title))
+    let provider = MusicBrainzProvider(connection: testConnection("musicbrainz", transport), userAgent: "t")
+    _ = try await provider.search(.init(title: "C++", limit: 5, reason: .title))
     let raw = try #require(transport.sent.first?.url.absoluteString)
     #expect(!raw.contains("+"))
     #expect(transport.sent.first.flatMap { query($0, "query") } == #"release:(C\+\+)"#)
@@ -773,23 +773,23 @@ struct StubTransport: HTTPTransport {
   }
 }
 
-@Suite struct SupplierSecondReviewTests {
+@Suite struct ProviderSecondReviewTests {
   /// A provider that said "busy" is left alone until its Retry-After.
   @Test func aBusyProviderIsLeftAloneUntilItsRetryAfter() async throws {
     let transport = ReplayTransport([("api.screenscraper.fr", status(430))])
-    let supplier = ScreenScraperSupplier(
+    let provider = ScreenScraperProvider(
       connection: testConnection("screenscraper", transport),
       credentials: .init(developerID: "dev", developerPassword: "TEGOLA-TEST-SENTINEL")
     )
-    for _ in 0..<3 { _ = try? await supplier.search(.init(title: "Sonic", limit: 5, reason: .title)) }
+    for _ in 0..<3 { _ = try? await provider.search(.init(title: "Sonic", limit: 5, reason: .title)) }
     #expect(transport.sent.count == 1)
   }
 
-  /// One user's too-broad query doesn't close a supplier for everyone.
+  /// One user's too-broad query doesn't close a provider for everyone.
   @Test func anAnswerTooLargeDoesntOpenTheBreaker() async throws {
-    let connection = testConnection("x", StubTransport(failure: SupplierFailure.failed("too-large")))
+    let connection = testConnection("x", StubTransport(failure: ProviderFailure.failed("too-large")))
     for _ in 0..<8 {
-      await #expect(throws: SupplierFailure.failed("too-large")) {
+      await #expect(throws: ProviderFailure.failed("too-large")) {
         _ = try await connection.exchange(.init(url: URL(string: "https://example.org")!))
       }
     }
@@ -797,14 +797,14 @@ struct StubTransport: HTTPTransport {
 
   /// The whole exchange is bounded, whatever the transport does.
   @Test func aSlowAnswerTimesOut() async throws {
-    let connection = SupplierConnection(
+    let connection = ProviderConnection(
       name: "x",
       transport: StubTransport(delay: .seconds(30)),
       interval: .zero,
       timeout: .milliseconds(50),
       logger: quietLogger
     )
-    await #expect(throws: SupplierFailure.failed("timeout")) {
+    await #expect(throws: ProviderFailure.failed("timeout")) {
       _ = try await connection.exchange(.init(url: URL(string: "https://example.org")!))
     }
   }
@@ -815,7 +815,7 @@ struct StubTransport: HTTPTransport {
     await breaker.failure()
     try await Task.sleep(for: .milliseconds(30))
     try await breaker.check()
-    await #expect(throws: SupplierFailure.circuitOpen(retryAfter: 1)) { try await breaker.check() }
+    await #expect(throws: ProviderFailure.circuitOpen(retryAfter: 1)) { try await breaker.check() }
     await breaker.release()
     try await breaker.check()
     await breaker.success()
@@ -827,14 +827,14 @@ struct StubTransport: HTTPTransport {
   @Test func aUTF16AnswerIsRefused() {
     let text = #"<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE items [<!ENTITY x "y">]><items/>"#
     let utf16 = text.data(using: .utf16)!
-    #expect(BoardGameGeekSupplier.parse(utf16) == nil)
-    #expect(BoardGameGeekSupplier.parse(Data("<items></items>".utf8))?.isEmpty == true)
+    #expect(BoardGameGeekProvider.parse(utf16) == nil)
+    #expect(BoardGameGeekProvider.parse(Data("<items></items>".utf8))?.isEmpty == true)
   }
 
   /// A brand-new token that IGDB refuses means wrong credentials: no second Twitch fetch.
   @Test func aRefusedFreshTokenIsNotFetchedAgain() async throws {
     let transport = ReplayTransport([("id.twitch.tv", ok(Fixture.twitchToken)), ("api.igdb.com", status(401))])
-    let igdb = IGDBSupplier(
+    let igdb = IGDBProvider(
       connection: testConnection("igdb", transport),
       tokens: TwitchTokens(
         clientID: "id",
@@ -842,7 +842,7 @@ struct StubTransport: HTTPTransport {
         connection: testConnection("twitch", transport)
       )
     )
-    await #expect(throws: SupplierFailure.unauthorized) {
+    await #expect(throws: ProviderFailure.unauthorized) {
       _ = try await igdb.search(.init(title: "x", limit: 5, reason: .title))
     }
     #expect(transport.sent.filter { $0.url.host == "id.twitch.tv" }.count == 1)
@@ -851,8 +851,8 @@ struct StubTransport: HTTPTransport {
   /// MusicBrainz's year and subtype rank and filter here, not in its index.
   @Test func musicBrainzFiltersTheSubtypeLocally() async throws {
     let transport = ReplayTransport([("musicbrainz.org", ok(Fixture.musicBrainzSearch))])
-    let supplier = MusicBrainzSupplier(connection: testConnection("musicbrainz", transport), userAgent: "t")
-    let candidates = try await supplier.search(
+    let provider = MusicBrainzProvider(connection: testConnection("musicbrainz", transport), userAgent: "t")
+    let candidates = try await provider.search(
       .init(title: "OK Computer", year: 1997, subtype: "cd", limit: 5, reason: .title)
     )
     #expect(candidates.count == 2)

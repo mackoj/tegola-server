@@ -6,14 +6,14 @@ import NIOCore
 import NIOHTTP1
 import OpenAPIRuntime
 
-// What every data supplier shares (PLAN §4, DECISIONS D-22, D-23). Each supplier's client is generated from its
-// OpenAPI description (`api/sources/`), and every client sends through `SupplierTransport`: an outbound pace within
+// What every data provider shares (PLAN §4, DECISIONS D-22, D-23). Each provider's client is generated from its
+// OpenAPI description (`api/sources/`), and every client sends through `ProviderTransport`: an outbound pace within
 // the provider's terms, a circuit breaker, timeouts, a size cap and no redirects, over a transport tests replace.
-// Also here: the bounded answer cache, and the text matching that ranks every supplier's answers the same way.
+// Also here: the bounded answer cache, and the text matching that ranks every provider's answers the same way.
 
 // MARK: - the wire
 
-/// One outbound HTTP request, as `SupplierTransport` hands it to an `HTTPTransport`.
+/// One outbound HTTP request, as `ProviderTransport` hands it to an `HTTPTransport`.
 package struct OutboundRequest: Sendable, Equatable {
   package enum Method: String, Sendable { case get = "GET", post = "POST" }
 
@@ -47,7 +47,7 @@ package protocol HTTPTransport: Sendable {
   func send(_ request: OutboundRequest, timeout: Duration, maximumBytes: Int) async throws -> OutboundResponse
 }
 
-/// The production transport: AsyncHTTPClient, HTTPS only, and no redirects. A redirect would carry a supplier's key
+/// The production transport: AsyncHTTPClient, HTTPS only, and no redirects. A redirect would carry a provider's key
 /// (a header, or ScreenScraper's query string) to wherever it points; it's answered as a failure instead (D-23).
 struct AsyncHTTPTransport: HTTPTransport {
   static let client = HTTPClient(
@@ -61,7 +61,7 @@ struct AsyncHTTPTransport: HTTPTransport {
   func send(_ request: OutboundRequest, timeout: Duration, maximumBytes: Int) async throws
     -> OutboundResponse
   {
-    guard request.url.scheme == "https" else { throw SupplierFailure.refusedURL }
+    guard request.url.scheme == "https" else { throw ProviderFailure.refusedURL }
     var outbound = HTTPClientRequest(url: request.url.absoluteString)
     outbound.method = request.method == .get ? .GET : .POST
     for (name, value) in request.headers { outbound.headers.add(name: name, value: value) }
@@ -70,7 +70,7 @@ struct AsyncHTTPTransport: HTTPTransport {
     let response = try await Self.client.execute(outbound, timeout: .seconds(max(1, seconds)))
     let buffer: ByteBuffer
     do { buffer = try await response.body.collect(upTo: maximumBytes) } catch is NIOTooManyBytesError {
-      throw SupplierFailure.failed("too-large")
+      throw ProviderFailure.failed("too-large")
     }
     var headers: [String: String] = [:]
     for header in response.headers { headers[header.name.lowercased()] = header.value }
@@ -80,8 +80,8 @@ struct AsyncHTTPTransport: HTTPTransport {
 
 // MARK: - failures
 
-/// Why a supplier didn't answer. Logged by case, never with the query; mapped to `SourceUnavailable` (503).
-package enum SupplierFailure: Error, Equatable {
+/// Why a provider didn't answer. Logged by case, never with the query; mapped to `SourceUnavailable` (503).
+package enum ProviderFailure: Error, Equatable {
   /// The provider said 429 or 503 (or ScreenScraper's 423, 430, 431), or our own pace would wait too long.
   case busy(retryAfter: Int)
   /// The breaker is open after repeated failures.
@@ -114,7 +114,7 @@ package enum SupplierFailure: Error, Equatable {
 
 // MARK: - pace
 
-/// Spaces a supplier's requests at least `interval` apart, across every request the server makes to it. A caller
+/// Spaces a provider's requests at least `interval` apart, across every request the server makes to it. A caller
 /// that would wait longer than `maximumWait` is refused with `busy` instead, so a request never hangs on a queue.
 actor Pacer {
   let interval: Duration
@@ -132,7 +132,7 @@ actor Pacer {
     let slot = max(now, nextSlot)
     let wait = slot - now
     guard wait <= maximumWait else {
-      throw SupplierFailure.busy(retryAfter: Int(wait.components.seconds) + 1)
+      throw ProviderFailure.busy(retryAfter: Int(wait.components.seconds) + 1)
     }
     nextSlot = slot + interval
     if wait > .zero { try await Task.sleep(for: wait) }
@@ -141,7 +141,7 @@ actor Pacer {
 
 // MARK: - circuit breaker
 
-/// After `threshold` failures in a row, a supplier is skipped for `coolDown`; then one request, and only one, probes
+/// After `threshold` failures in a row, a provider is skipped for `coolDown`; then one request, and only one, probes
 /// it, and its success closes the breaker. A provider that said "busy" (429, 503, ScreenScraper's quotas) is also
 /// skipped until its `Retry-After` has passed, so retries don't keep knocking on a closed door.
 actor CircuitBreaker {
@@ -160,14 +160,14 @@ actor CircuitBreaker {
   func check() throws {
     let now = ContinuousClock.now
     if let busyUntil, now < busyUntil {
-      throw SupplierFailure.busy(retryAfter: Int((busyUntil - now).components.seconds) + 1)
+      throw ProviderFailure.busy(retryAfter: Int((busyUntil - now).components.seconds) + 1)
     }
     guard let openUntil else { return }
     if now < openUntil {
-      throw SupplierFailure.circuitOpen(retryAfter: Int((openUntil - now).components.seconds) + 1)
+      throw ProviderFailure.circuitOpen(retryAfter: Int((openUntil - now).components.seconds) + 1)
     }
     // Half-open: one probe goes through; the others wait for its answer.
-    guard !probing else { throw SupplierFailure.circuitOpen(retryAfter: 1) }
+    guard !probing else { throw ProviderFailure.circuitOpen(retryAfter: 1) }
     probing = true
   }
 
@@ -196,8 +196,8 @@ actor CircuitBreaker {
 
 // MARK: - cache
 
-/// Answers kept in memory, keyed by supplier, operation and normalised query: a barcode's answer is the same for
-/// everyone (PLAN §4). Bounded by entries, each answer itself bounded by its supplier (at most 10 candidates); the
+/// Answers kept in memory, keyed by provider, operation and normalised query: a barcode's answer is the same for
+/// everyone (PLAN §4). Bounded by entries, each answer itself bounded by its provider (at most 10 candidates); the
 /// oldest entries go first. Errors are never cached.
 actor AnswerCache<Value: Sendable> {
   private struct Entry {
@@ -250,11 +250,11 @@ actor AnswerCache<Value: Sendable> {
   var count: Int { entries.count }
 }
 
-// MARK: - one supplier's connection
+// MARK: - one provider's connection
 
-/// A supplier's way out: its pace, its breaker, its timeout, its size cap, and its logger. Every request goes
-/// through `exchange`, which turns every failure into a `SupplierFailure` and counts it.
-struct SupplierConnection: Sendable {
+/// A provider's way out: its pace, its breaker, its timeout, its size cap, and its logger. Every request goes
+/// through `exchange`, which turns every failure into a `ProviderFailure` and counts it.
+struct ProviderConnection: Sendable {
   let name: String
   let transport: any HTTPTransport
   let pacer: Pacer
@@ -281,18 +281,18 @@ struct SupplierConnection: Sendable {
     self.logger = logger
   }
 
-  /// A 2xx or a 404 answer. Anything else throws a `SupplierFailure`.
-  func exchange(_ request: OutboundRequest) async throws(SupplierFailure) -> OutboundResponse {
+  /// A 2xx or a 404 answer. Anything else throws a `ProviderFailure`.
+  func exchange(_ request: OutboundRequest) async throws(ProviderFailure) -> OutboundResponse {
     do {
       try await breaker.check()
-    } catch let failure as SupplierFailure {
+    } catch let failure as ProviderFailure {
       throw failure
     } catch {
       throw .failed("cancelled")
     }
     do {
       try await pacer.acquire()
-    } catch let failure as SupplierFailure {
+    } catch let failure as ProviderFailure {
       await breaker.release()
       throw failure
     } catch {
@@ -307,16 +307,16 @@ struct SupplierConnection: Sendable {
         group.addTask { try await transport.send(request, timeout: timeout, maximumBytes: maximumBytes) }
         group.addTask {
           try await Task.sleep(for: timeout)
-          throw SupplierFailure.failed("timeout")
+          throw ProviderFailure.failed("timeout")
         }
         defer { group.cancelAll() }
         return try await group.next()!
       }
-    } catch let failure as SupplierFailure {
+    } catch let failure as ProviderFailure {
       await record(failure)
       throw failure
     } catch {
-      let failure = SupplierFailure.failed("network")
+      let failure = ProviderFailure.failed("network")
       await record(failure)
       throw failure
     }
@@ -325,7 +325,7 @@ struct SupplierConnection: Sendable {
       await breaker.success()
       return response
     case 300..<400:
-      let failure = SupplierFailure.failed("redirect")
+      let failure = ProviderFailure.failed("redirect")
       await record(failure)
       throw failure
     case 401, 403:
@@ -334,25 +334,25 @@ struct SupplierConnection: Sendable {
     case 429, 503, 423, 430, 431:
       let retryAfter =
         response.headers["retry-after"].flatMap { Int($0) } ?? (response.status == 430 ? 3600 : 30)
-      let failure = SupplierFailure.busy(retryAfter: min(max(retryAfter, 1), 3600))
+      let failure = ProviderFailure.busy(retryAfter: min(max(retryAfter, 1), 3600))
       await record(failure)
       throw failure
     default:
-      let failure = SupplierFailure.failed("http-\(response.status / 100)xx")
+      let failure = ProviderFailure.failed("http-\(response.status / 100)xx")
       await record(failure)
       throw failure
     }
   }
 
-  /// Runs one generated-client call: a `SupplierFailure` from the transport comes out as itself, an answer the
+  /// Runs one generated-client call: a `ProviderFailure` from the transport comes out as itself, an answer the
   /// client couldn't decode as `undecodable` (counted by the breaker), anything else as `failed`.
-  func call<T: Sendable>(_ body: @Sendable () async throws -> T) async throws(SupplierFailure) -> T {
+  func call<T: Sendable>(_ body: @Sendable () async throws -> T) async throws(ProviderFailure) -> T {
     do {
       return try await body()
-    } catch let failure as SupplierFailure {
+    } catch let failure as ProviderFailure {
       throw failure
     } catch let error as ClientError {
-      if let failure = error.underlyingError as? SupplierFailure { throw failure }
+      if let failure = error.underlyingError as? ProviderFailure { throw failure }
       await record(.failed("undecodable"))
       throw .failed("undecodable")
     } catch {
@@ -362,7 +362,7 @@ struct SupplierConnection: Sendable {
   }
 
   /// Reads a decoded answer's body; a body of the wrong shape is `undecodable`, counted by the breaker.
-  func decoded<T>(_ body: () throws -> T) async throws(SupplierFailure) -> T {
+  func decoded<T>(_ body: () throws -> T) async throws(ProviderFailure) -> T {
     do {
       return try body()
     } catch {
@@ -371,10 +371,10 @@ struct SupplierConnection: Sendable {
     }
   }
 
-  /// Logs the supplier and the reason, never the query or the answer. A busy provider is remembered until its
+  /// Logs the provider and the reason, never the query or the answer. A busy provider is remembered until its
   /// `Retry-After`; an answer too large for one query says nothing about the provider's health, so it doesn't count
-  /// towards the breaker (one user's broad search mustn't close a supplier for everyone).
-  func record(_ failure: SupplierFailure) async {
+  /// towards the breaker (one user's broad search mustn't close a provider for everyone).
+  func record(_ failure: ProviderFailure) async {
     switch failure {
     case .busy(let seconds): await breaker.busy(for: seconds)
     case .failed("too-large"): await breaker.success()  // the provider answered; the query was too broad
@@ -384,9 +384,9 @@ struct SupplierConnection: Sendable {
   }
 }
 
-/// The generated clients' transport: every request goes through the supplier's connection (D-23).
-struct SupplierTransport: ClientTransport {
-  let connection: SupplierConnection
+/// The generated clients' transport: every request goes through the provider's connection (D-23).
+struct ProviderTransport: ClientTransport {
+  let connection: ProviderConnection
 
   func send(
     _ request: HTTPRequest,
@@ -395,7 +395,7 @@ struct SupplierTransport: ClientTransport {
     operationID: String
   ) async throws -> (HTTPResponse, HTTPBody?) {
     guard let url = URL(string: baseURL.absoluteString + (request.path ?? "")) else {
-      throw SupplierFailure.refusedURL
+      throw ProviderFailure.refusedURL
     }
     var headers: [String: String] = [:]
     for field in request.headerFields {
@@ -404,7 +404,7 @@ struct SupplierTransport: ClientTransport {
     }
     var data: Data?
     if let body {
-      do { data = try await Data(collecting: body, upTo: 64 * 1024) } catch { throw SupplierFailure.failed("body") }
+      do { data = try await Data(collecting: body, upTo: 64 * 1024) } catch { throw ProviderFailure.failed("body") }
     }
     let outbound = OutboundRequest(
       method: request.method == .post ? .post : .get,
@@ -421,7 +421,7 @@ struct SupplierTransport: ClientTransport {
   }
 }
 
-/// Adds a supplier's headers (its key, its token, its User-Agent) to every request. OpenAPI ignores an
+/// Adds a provider's headers (its key, its token, its User-Agent) to every request. OpenAPI ignores an
 /// `Authorization` header parameter, so keys can't be in the descriptions: they're added here, per request (D-23).
 struct HeadersMiddleware: ClientMiddleware {
   let headers: @Sendable () async throws -> [String: String]
@@ -444,7 +444,7 @@ struct HeadersMiddleware: ClientMiddleware {
 
 // MARK: - text
 
-/// Normalising and comparing titles, so every supplier ranks its answers the same way (D-22).
+/// Normalising and comparing titles, so every provider ranks its answers the same way (D-22).
 enum TextMatch {
   /// Lower case, no diacritics, punctuation as spaces, "&" as "and", collapsed whitespace.
   static func normalise(_ text: String) -> String {
@@ -555,7 +555,7 @@ enum TextMatch {
   }
 }
 
-/// An image URL a supplier gave us, kept only when it's HTTPS on one of the hosts we expect (D-22).
+/// An image URL a provider gave us, kept only when it's HTTPS on one of the hosts we expect (D-22).
 func allowedImageURL(_ raw: String?, hosts: Set<String>) -> String? {
   guard var raw, !raw.isEmpty else { return nil }
   if raw.hasPrefix("//") { raw = "https:" + raw }

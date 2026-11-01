@@ -15,7 +15,7 @@ and a device.
 
 1. **Owner, keys:** register the suppliers' keys (`deploy/env.example`, "Lookup sources"): a MusicBrainz contact, a
    Twitch application for IGDB, a ScreenScraper developer account, a BoardGameGeek XML API token. Then, with the
-   keys, re-record `Tests/TegolaServerTests/SupplierFixtures.swift` from the live APIs: they're hand-written from the
+   keys, re-record `Tests/TegolaServerTests/ProviderFixtures.swift` from the live APIs: they're hand-written from the
    documented formats, since this sandbox can't reach the providers. Check in particular:
    - each answer's Content-Type (the generated clients refuse undeclared ones, D-23);
    - IGDB's `release_region`;
@@ -24,8 +24,8 @@ and a device.
    - ScreenScraper's system ids;
    - BGG's bearer token.
 2. **Adding a supplier:** write (or fetch) its description in `api/sources/`, add a `<Name>API` target in
-   `Package.swift` (copy an existing one), and conform a type to `DataSupplier` in `Sources/TegolaServer/Suppliers/`.
-   Then wire it in `SupplierFactory.swift` and `SourceSettings`, and add tests with fixtures that carry the real
+   `Package.swift` (copy an existing one), and conform a type to `DataProvider` in `Sources/TegolaServer/Providers/`.
+   Then wire it in `ProviderFactory.swift` and `SourceSettings`, and add tests with fixtures that carry the real
    Content-Type. A general source that should only answer when the type's own find nothing sets `tier: .fallback`
    (D-26).
 3. **Dependabot PRs**, weekly: merge one only once both `linux` and `docker` are green (the `docker` job takes about
@@ -56,10 +56,10 @@ update.
 - **M3 (suppliers):** MusicBrainz (music: barcode and words), IGDB + ScreenScraper (video games: words),
   BoardGameGeek (board games: words); the owner's choice (D-22). Wikidata (barcode and words) for `thing`, and as the
   other types' fallback tier (D-26). Each is described in
-  `api/sources/*.openapi.yaml` with a generated client (`Sources/<Name>API/`), conforms to `DataSupplier`
-  (`Sources/TegolaServer/Suppliers/`), and turns on with its environment variables. All clients send through
-  `SupplierTransport`, which applies pace, breaker, timeout, size cap and no redirects (D-23). Tests:
-  `SupplierTests.swift`, with fixtures in `SupplierFixtures.swift`.
+  `api/sources/*.openapi.yaml` with a generated client (`Sources/<Name>API/`), conforms to `DataProvider`
+  (`Sources/TegolaServer/Providers/`), and turns on with its environment variables. All clients send through
+  `ProviderTransport`, which applies pace, breaker, timeout, size cap and no redirects (D-23). Tests:
+  `ProviderTests.swift`, with fixtures in `ProviderFixtures.swift`.
 - **M2 (persistence):** keys and challenges in Postgres (`PostgresStore`), required in production. The Compose stack
   runs Postgres on an internal-only network. Report: `docs/milestones/M2.md`.
 - **Review (D-19):**

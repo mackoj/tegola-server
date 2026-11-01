@@ -8,10 +8,10 @@ import ScreenScraperAPI
 /// logged, and its media URLs, which carry them too, are never passed to the app: candidates from ScreenScraper have
 /// no images. An answer without `jeux` (or `jeu`) is an error page, not "no match".
 /// Works are `screenscraper:game:<id>`, releases `screenscraper:game:<id>:<region or any>`.
-struct ScreenScraperSupplier: DataSupplier {
+struct ScreenScraperProvider: DataProvider {
   typealias Game = ScreenScraperAPI.Components.Schemas.Game
 
-  let connection: SupplierConnection
+  let connection: ProviderConnection
   let credentials: ScreenScraperCredentials
   let client: ScreenScraperAPI.Client
 
@@ -26,18 +26,18 @@ struct ScreenScraperSupplier: DataSupplier {
     attribution: "Data from ScreenScraper.fr"
   )
 
-  init(connection: SupplierConnection, credentials: ScreenScraperCredentials) {
+  init(connection: ProviderConnection, credentials: ScreenScraperCredentials) {
     self.connection = connection
     self.credentials = credentials
     self.client = ScreenScraperAPI.Client(
       serverURL: try! ScreenScraperAPI.Servers.Server1.url(),
-      transport: SupplierTransport(connection: connection)
+      transport: ProviderTransport(connection: connection)
     )
   }
 
-  func barcode(_ query: BarcodeQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] { [] }
+  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate] { [] }
 
-  func search(_ query: SupplierQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] {
+  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate] {
     guard !query.title.isEmpty else { return [] }
     let platform = VideoGamePlatforms.platform(subtype: query.subtype)
     let output = try await connection.call {
@@ -80,7 +80,7 @@ struct ScreenScraperSupplier: DataSupplier {
     return candidates
   }
 
-  func work(id: String) async throws(SupplierFailure) -> Components.Schemas.Work? {
+  func work(id: String) async throws(ProviderFailure) -> Components.Schemas.Work? {
     let prefix = "screenscraper:game:"
     guard id.hasPrefix(prefix), let number = Int(id.dropFirst(prefix.count)), number > 0 else { return nil }
     let output = try await connection.call {

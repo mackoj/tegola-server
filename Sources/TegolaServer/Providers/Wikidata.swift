@@ -6,24 +6,24 @@ import WikidataAPI
 /// (GTIN, P3962), no key. Wikimedia asks for a User-Agent naming the application and a contact, and for requests one
 /// at a time; the connection's pacer keeps to it. Its data is CC0.
 ///
-/// One supplier per type, each with its profile: which classes (P31) count as that type, which statement names the
+/// One provider per type, each with its profile: which classes (P31) count as that type, which statement names the
 /// subtitle, and its tier. All of them share one connection, so Wikidata sees one paced client. Items are
 /// `wikidata:<Q-id>`; an item is a work more often than an edition, so a candidate has no subtype and no work id, and
 /// its confidence is weighted down.
-struct WikidataSupplier: DataSupplier {
+struct WikidataProvider: DataProvider {
   typealias Entity = WikidataAPI.Components.Schemas.Entity
   typealias Claims = WikidataAPI.Components.Schemas.Claims
   typealias Statements = WikidataAPI.Components.Schemas.Statements
 
   let profile: WikidataProfile
-  let connection: SupplierConnection
+  let connection: ProviderConnection
   let client: WikidataAPI.Client
 
   let name = "wikidata"
   let idPrefix = "wikidata:"
   let answersBarcodes = true
   var typeID: String { profile.typeID }
-  var tier: SupplierTier { profile.tier }
+  var tier: ProviderTier { profile.tier }
 
   /// Labels are asked in English, with Wikidata's fallback to another language; the contract's requests carry no
   /// language yet.
@@ -35,17 +35,17 @@ struct WikidataSupplier: DataSupplier {
     attribution: "Data from Wikidata (CC0)"
   )
 
-  init(profile: WikidataProfile, connection: SupplierConnection, userAgent: String) {
+  init(profile: WikidataProfile, connection: ProviderConnection, userAgent: String) {
     self.profile = profile
     self.connection = connection
     self.client = WikidataAPI.Client(
       serverURL: try! WikidataAPI.Servers.Server1.url(),
-      transport: SupplierTransport(connection: connection),
+      transport: ProviderTransport(connection: connection),
       middlewares: [HeadersMiddleware { ["User-Agent": userAgent] }]
     )
   }
 
-  func barcode(_ query: BarcodeQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] {
+  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate] {
     let codes = Self.gtinVariants(query.code)
     guard !codes.isEmpty else { return [] }
     let answer = try await api(
@@ -67,7 +67,7 @@ struct WikidataSupplier: DataSupplier {
     }
   }
 
-  func search(_ query: SupplierQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] {
+  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate] {
     // Wikidata's search reads labels and aliases: a catalogue number alone finds nothing worth asking for.
     guard let words = TextMatch.clean(query.title, max: 250) else { return [] }
     let answer = try await api(
@@ -96,11 +96,11 @@ struct WikidataSupplier: DataSupplier {
   }
 
   /// Wikidata items aren't grouped into works with editions here.
-  func work(id: String) async throws(SupplierFailure) -> Components.Schemas.Work? { nil }
+  func work(id: String) async throws(ProviderFailure) -> Components.Schemas.Work? { nil }
 
   // MARK: - requests
 
-  private func api(_ query: WikidataAPI.Operations.Api.Input.Query) async throws(SupplierFailure)
+  private func api(_ query: WikidataAPI.Operations.Api.Input.Query) async throws(ProviderFailure)
     -> WikidataAPI.Components.Schemas.ApiAnswer
   {
     let output = try await connection.call { try await client.api(query: query) }
@@ -114,7 +114,7 @@ struct WikidataSupplier: DataSupplier {
     }
   }
 
-  private func entities(_ ids: [String], props: String) async throws(SupplierFailure) -> [String: Entity] {
+  private func entities(_ ids: [String], props: String) async throws(ProviderFailure) -> [String: Entity] {
     guard !ids.isEmpty else { return [:] }
     let answer = try await api(
       .init(
@@ -134,14 +134,14 @@ struct WikidataSupplier: DataSupplier {
   private func candidates(
     _ ids: [String],
     rank: (Entity) -> (Double, [Components.Schemas.Reason])?
-  ) async throws(SupplierFailure) -> [Components.Schemas.Candidate] {
+  ) async throws(ProviderFailure) -> [Components.Schemas.Candidate] {
     try await candidates(ids) { entity, _, _, _ in rank(entity) }
   }
 
   private func candidates(
     _ ids: [String],
     rank: (Entity, String, String?, Int?) -> (Double, [Components.Schemas.Reason])?
-  ) async throws(SupplierFailure) -> [Components.Schemas.Candidate] {
+  ) async throws(ProviderFailure) -> [Components.Schemas.Candidate] {
     var unique: [String] = []
     for id in ids where !unique.contains(id) { unique.append(id) }
     let ordered = Array(unique.prefix(20))
@@ -248,7 +248,7 @@ struct WikidataProfile: Sendable {
   }
 
   var typeID: String
-  var tier: SupplierTier
+  var tier: ProviderTier
   /// The classes (P31) that are this type. Empty: any class except `excluded`.
   var classes: Set<String>
   var excluded: Set<String> = []
@@ -265,7 +265,7 @@ struct WikidataProfile: Sendable {
 
   func subtitleItem(in claims: WikidataAPI.Components.Schemas.Claims?) -> String? {
     for property in subtitle {
-      if let first = WikidataSupplier.items(property.statements(claims)).first { return first }
+      if let first = WikidataProvider.items(property.statements(claims)).first { return first }
     }
     return nil
   }

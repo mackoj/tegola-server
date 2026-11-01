@@ -6,10 +6,10 @@ import OpenAPIRuntime
 /// barcode and words, no key. MusicBrainz asks for a User-Agent naming the application and a contact, and at most
 /// one request a second; the connection's pacer keeps to it. Its data is CC0.
 /// Releases are `musicbrainz:release:<mbid>`, works are `musicbrainz:release-group:<mbid>`.
-struct MusicBrainzSupplier: DataSupplier {
+struct MusicBrainzProvider: DataProvider {
   typealias Release = MusicBrainzAPI.Components.Schemas.Release
 
-  let connection: SupplierConnection
+  let connection: ProviderConnection
   let client: MusicBrainzAPI.Client
 
   let name = "musicbrainz"
@@ -27,16 +27,16 @@ struct MusicBrainzSupplier: DataSupplier {
     attribution: "Data from MusicBrainz (CC0)"
   )
 
-  init(connection: SupplierConnection, userAgent: String) {
+  init(connection: ProviderConnection, userAgent: String) {
     self.connection = connection
     self.client = MusicBrainzAPI.Client(
       serverURL: try! MusicBrainzAPI.Servers.Server1.url(),
-      transport: SupplierTransport(connection: connection),
+      transport: ProviderTransport(connection: connection),
       middlewares: [HeadersMiddleware { ["User-Agent": userAgent] }]
     )
   }
 
-  func barcode(_ query: BarcodeQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] {
+  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate] {
     let code = query.code.filter(\.isNumber)
     guard !code.isEmpty else { return [] }
     let releases = try await releases(.init(query: "barcode:\(code)", fmt: .json, limit: 10))
@@ -48,7 +48,7 @@ struct MusicBrainzSupplier: DataSupplier {
     }
   }
 
-  func search(_ query: SupplierQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] {
+  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate] {
     var clauses: [String] = []
     if !query.title.isEmpty { clauses.append("release:(\(Self.escape(query.title)))") }
     if let artist = query.subtitle, !artist.isEmpty { clauses.append("artist:(\(Self.escape(artist)))") }
@@ -95,7 +95,7 @@ struct MusicBrainzSupplier: DataSupplier {
     }
   }
 
-  func work(id: String) async throws(SupplierFailure) -> Components.Schemas.Work? {
+  func work(id: String) async throws(ProviderFailure) -> Components.Schemas.Work? {
     let prefix = "musicbrainz:release-group:"
     guard id.hasPrefix(prefix), let mbid = Self.mbid(String(id.dropFirst(prefix.count))) else { return nil }
     let releases = try await releases(
@@ -121,7 +121,7 @@ struct MusicBrainzSupplier: DataSupplier {
 
   // MARK: - requests
 
-  private func releases(_ query: MusicBrainzAPI.Operations.Releases.Input.Query) async throws(SupplierFailure)
+  private func releases(_ query: MusicBrainzAPI.Operations.Releases.Input.Query) async throws(ProviderFailure)
     -> [Release]
   {
     let output = try await connection.call { try await client.releases(query: query) }

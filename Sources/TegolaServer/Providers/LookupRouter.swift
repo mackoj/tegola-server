@@ -1,11 +1,11 @@
 import Foundation
 import Logging
 
-/// Any data supplier, abstractly (D-23): one database that answers for one type (PLAN §4). Everything specific to a
-/// supplier (its OpenAPI-generated client, its key, its query language, its answer's shape) stays behind this
-/// protocol; the lookup service only sees candidates, works and `SupplierFailure`s. Ids a supplier returns carry
-/// its prefix (`musicbrainz:`, `igdb:`, …), so `work(id:)` can find the supplier that owns a work.
-protocol DataSupplier: Sendable {
+/// Any data provider, abstractly (D-23): one database that answers for one type (PLAN §4). Everything specific to a
+/// provider (its OpenAPI-generated client, its key, its query language, its answer's shape) stays behind this
+/// protocol; the lookup service only sees candidates, works and `ProviderFailure`s. Ids a provider returns carry
+/// its prefix (`musicbrainz:`, `igdb:`, …), so `work(id:)` can find the provider that owns a work.
+protocol DataProvider: Sendable {
   /// The `name` in `Candidate.sources`, and the prefix of its ids, lower-cased.
   var name: String { get }
   var typeID: String { get }
@@ -13,22 +13,22 @@ protocol DataSupplier: Sendable {
   var idPrefix: String { get }
   /// Barcode lookups are only asked of sources with a barcode index.
   var answersBarcodes: Bool { get }
-  /// When it's asked: with the type's other primary suppliers, or only when they found nothing (D-26).
-  var tier: SupplierTier { get }
+  /// When it's asked: with the type's other primary providers, or only when they found nothing (D-26).
+  var tier: ProviderTier { get }
 
-  func barcode(_ query: BarcodeQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate]
-  func search(_ query: SupplierQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate]
-  func work(id: String) async throws(SupplierFailure) -> Components.Schemas.Work?
+  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate]
+  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate]
+  func work(id: String) async throws(ProviderFailure) -> Components.Schemas.Work?
 }
 
-extension DataSupplier {
-  var tier: SupplierTier { .primary }
+extension DataProvider {
+  var tier: ProviderTier { .primary }
 }
 
-/// The order a type's suppliers are asked in (D-26). Every supplier of one tier is asked at once; the next tier only
-/// when the one before found nothing, whether its suppliers answered "no match" or failed. A source that knows a type
+/// The order a type's providers are asked in (D-26). Every provider of one tier is asked at once; the next tier only
+/// when the one before found nothing, whether its providers answered "no match" or failed. A source that knows a type
 /// well is primary; a general one (Wikidata) is a fallback, so its looser matches never crowd out a precise one.
-enum SupplierTier: Int, Comparable, CaseIterable, Sendable {
+enum ProviderTier: Int, Comparable, CaseIterable, Sendable {
   case primary
   case fallback
 
@@ -36,7 +36,7 @@ enum SupplierTier: Int, Comparable, CaseIterable, Sendable {
 }
 
 /// A words query, from `identifyObject`'s hints or one import row.
-struct SupplierQuery: Sendable, Hashable {
+struct SearchQuery: Sendable, Hashable {
   var title: String
   var subtitle: String?
   var catalogueNumber: String?
@@ -64,16 +64,16 @@ func cacheKeyString(_ parts: [String?]) -> String {
   return String(decoding: data, as: UTF8.self)
 }
 
-/// The suppliers the configuration turned on, grouped by type (D-22), asked tier by tier (D-26). Every supplier of a
+/// The providers the configuration turned on, grouped by type (D-22), asked tier by tier (D-26). Every provider of a
 /// tier is asked at once; the answers are merged and ranked. When some fail and others answer with candidates, those
-/// are enough. When a tier finds nothing (its suppliers failed, or found no match), the next tier is asked. When no
-/// tier finds anything and any supplier failed, the lookup is `SourceUnavailable` (503) with the shortest
-/// `Retry-After` among the failures, and the app retries: a failure never reads as "no match". Each supplier's answer
+/// are enough. When a tier finds nothing (its providers failed, or found no match), the next tier is asked. When no
+/// tier finds anything and any provider failed, the lookup is `SourceUnavailable` (503) with the shortest
+/// `Retry-After` among the failures, and the app retries: a failure never reads as "no match". Each provider's answer
 /// is cut to its best 10 and cached; failures never are.
-package struct SuppliersLookupService: LookupService {
+package struct LookupRouter: LookupService {
   package typealias Candidate = Components.Schemas.Candidate
 
-  let sources: [String: [any DataSupplier]]
+  let sources: [String: [any DataProvider]]
   let cache: AnswerCache<[Candidate]>
   let works: AnswerCache<Components.Schemas.Work>
   let lifetimes: Lifetimes
@@ -83,13 +83,13 @@ package struct SuppliersLookupService: LookupService {
     var empty: Duration = .seconds(3600)
   }
 
-  /// What one tier found, and the `Retry-After` of each supplier that failed.
+  /// What one tier found, and the `Retry-After` of each provider that failed.
   struct TierAnswer: Sendable {
     var candidates: [Candidate] = []
     var failures: [Int] = []
   }
 
-  init(sources: [any DataSupplier], cacheCapacity: Int = 10_000, lifetimes: Lifetimes = Lifetimes()) {
+  init(sources: [any DataProvider], cacheCapacity: Int = 10_000, lifetimes: Lifetimes = Lifetimes()) {
     self.sources = Dictionary(grouping: sources, by: \.typeID)
     self.cache = AnswerCache(capacity: cacheCapacity)
     self.works = AnswerCache(capacity: max(1, cacheCapacity / 10))
@@ -102,15 +102,15 @@ package struct SuppliersLookupService: LookupService {
     try await tiered(query.typeID) { tier in await askBarcode(tier, query) }
   }
 
-  /// The words go to every supplier of the tier, a barcode to those with a barcode index, both at once. A release
+  /// The words go to every provider of the tier, a barcode to those with a barcode index, both at once. A release
   /// both find is one candidate, with the higher confidence and both reasons. One half failing doesn't hide what the
   /// other found; when neither finds anything, the next tier is asked (D-24, D-26).
   package func identify(typeID: String, _ hints: Components.Schemas.IdentifyHints) async throws -> [Candidate] {
     let words = TextMatch.queryTitle(title: hints.title, text: hints.text)
-    let query: SupplierQuery? =
+    let query: SearchQuery? =
       words == nil && hints.catalogueNumber == nil
       ? nil
-      : SupplierQuery(
+      : SearchQuery(
         title: words ?? "",
         subtitle: hints.subtitle,
         catalogueNumber: hints.catalogueNumber,
@@ -165,7 +165,7 @@ package struct SuppliersLookupService: LookupService {
   }
 
   package func match(typeID: String, _ item: Components.Schemas.MatchItem) async throws -> [Candidate] {
-    let query = SupplierQuery(
+    let query = SearchQuery(
       title: item.title,
       subtitle: item.subtitle,
       // The contract gives an import row's year no range: one outside the years a ranking compares (a blank CSV
@@ -182,7 +182,7 @@ package struct SuppliersLookupService: LookupService {
   package func work(id: String) async throws -> Components.Schemas.Work? {
     guard let source = sources.values.joined().first(where: { id.hasPrefix($0.idPrefix) }) else { return nil }
     if let cached = await works.value(id) { return cached }
-    do throws(SupplierFailure) {
+    do throws(ProviderFailure) {
       guard let work = try await source.work(id: id) else { return nil }
       await works.store(work, for: id, lifetime: lifetimes.answer)
       return work
@@ -195,10 +195,10 @@ package struct SuppliersLookupService: LookupService {
 
   /// Asks the type's tiers in order and returns the first answer with candidates. With none, any failure on the way
   /// is `SourceUnavailable`: a fallback's "no match" can't stand for a primary that couldn't answer.
-  private func tiered(_ typeID: String, _ body: ([any DataSupplier]) async -> TierAnswer) async throws -> [Candidate] {
+  private func tiered(_ typeID: String, _ body: ([any DataProvider]) async -> TierAnswer) async throws -> [Candidate] {
     let all = sources[typeID] ?? []
     var failures: [Int] = []
-    for tier in SupplierTier.allCases {
+    for tier in ProviderTier.allCases {
       let asked = all.filter { $0.tier == tier }
       guard !asked.isEmpty else { continue }
       let answer = await body(asked)
@@ -209,36 +209,36 @@ package struct SuppliersLookupService: LookupService {
     return []
   }
 
-  private func askWords(_ tier: [any DataSupplier], _ query: SupplierQuery) async -> TierAnswer {
-    await ask(tier, operation: "search", key: query.cacheKey) { source throws(SupplierFailure) in
+  private func askWords(_ tier: [any DataProvider], _ query: SearchQuery) async -> TierAnswer {
+    await ask(tier, operation: "search", key: query.cacheKey) { source throws(ProviderFailure) in
       try await source.search(query)
     }
   }
 
-  private func askBarcode(_ tier: [any DataSupplier], _ query: BarcodeQuery) async -> TierAnswer {
+  private func askBarcode(_ tier: [any DataProvider], _ query: BarcodeQuery) async -> TierAnswer {
     let key = cacheKeyString([query.code, query.symbology?.rawValue, query.subtype, query.region])
     return await ask(tier.filter(\.answersBarcodes), operation: "barcode", key: key) {
-      source throws(SupplierFailure) in try await source.barcode(query)
+      source throws(ProviderFailure) in try await source.barcode(query)
     }
   }
 
   /// Asks every source in parallel, each through the cache, and collects what comes back.
   private func ask(
-    _ asked: [any DataSupplier],
+    _ asked: [any DataProvider],
     operation: String,
     key: String,
-    _ body: @escaping @Sendable (any DataSupplier) async throws(SupplierFailure) -> [Candidate]
+    _ body: @escaping @Sendable (any DataProvider) async throws(ProviderFailure) -> [Candidate]
   ) async -> TierAnswer {
     guard !asked.isEmpty else { return TierAnswer() }
     let cache = self.cache
     let lifetimes = self.lifetimes
-    let outcomes = await withTaskGroup(of: Result<[Candidate], SupplierFailure>.self) { group in
+    let outcomes = await withTaskGroup(of: Result<[Candidate], ProviderFailure>.self) { group in
       for source in asked {
         group.addTask {
           let cacheKey = "\(source.name)|\(source.typeID)|\(operation)|\(key)"
           if let cached = await cache.value(cacheKey) { return .success(cached) }
-          do throws(SupplierFailure) {
-            // Best 10 per supplier: what the contract can return, and a bound on what the cache holds.
+          do throws(ProviderFailure) {
+            // Best 10 per provider: what the contract can return, and a bound on what the cache holds.
             let answer = Array(try await body(source).sorted { $0.confidence > $1.confidence }.prefix(10))
             await cache.store(answer, for: cacheKey, lifetime: answer.isEmpty ? lifetimes.empty : lifetimes.answer)
             return .success(answer)
@@ -247,7 +247,7 @@ package struct SuppliersLookupService: LookupService {
           }
         }
       }
-      var outcomes: [Result<[Candidate], SupplierFailure>] = []
+      var outcomes: [Result<[Candidate], ProviderFailure>] = []
       for await outcome in group { outcomes.append(outcome) }
       return outcomes
     }

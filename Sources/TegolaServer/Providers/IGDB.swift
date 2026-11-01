@@ -8,10 +8,10 @@ import TwitchAPI
 /// secret, exchanged for an app access token; requests carry both. IGDB allows four requests a second and requires
 /// attribution. A candidate is one release date of a game: one platform in one region.
 /// Works are `igdb:game:<id>`, releases `igdb:game:<id>:<platform id>:<region or any>`.
-struct IGDBSupplier: DataSupplier {
+struct IGDBProvider: DataProvider {
   typealias Game = IGDBAPI.Components.Schemas.Game
 
-  let connection: SupplierConnection
+  let connection: ProviderConnection
   let tokens: TwitchTokens
   let client: IGDBAPI.Client
 
@@ -33,21 +33,21 @@ struct IGDBSupplier: DataSupplier {
     "release_dates.platform.name", "platforms.id", "platforms.name",
   ].joined(separator: ",")
 
-  init(connection: SupplierConnection, tokens: TwitchTokens) {
+  init(connection: ProviderConnection, tokens: TwitchTokens) {
     self.connection = connection
     self.tokens = tokens
     self.client = IGDBAPI.Client(
       serverURL: try! IGDBAPI.Servers.Server1.url(),
-      transport: SupplierTransport(connection: connection),
+      transport: ProviderTransport(connection: connection),
       middlewares: [
         HeadersMiddleware { ["Client-ID": tokens.clientID, "Authorization": "Bearer \(try await tokens.token())"] }
       ]
     )
   }
 
-  func barcode(_ query: BarcodeQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] { [] }
+  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate] { [] }
 
-  func search(_ query: SupplierQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] {
+  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate] {
     guard !query.title.isEmpty else { return [] }
     let games = try await games(
       "search \"\(Self.escape(query.title))\"; fields \(Self.fields); limit \(min(20, query.limit * 2));"
@@ -74,7 +74,7 @@ struct IGDBSupplier: DataSupplier {
     return candidates
   }
 
-  func work(id: String) async throws(SupplierFailure) -> Components.Schemas.Work? {
+  func work(id: String) async throws(ProviderFailure) -> Components.Schemas.Work? {
     let prefix = "igdb:game:"
     guard id.hasPrefix(prefix), let number = Int(id.dropFirst(prefix.count)), number > 0 else { return nil }
     guard let game = try await games("fields \(Self.fields); where id = \(number); limit 1;").first,
@@ -100,10 +100,10 @@ struct IGDBSupplier: DataSupplier {
 
   // MARK: - requests
 
-  private func games(_ query: String) async throws(SupplierFailure) -> [Game] {
+  private func games(_ query: String) async throws(ProviderFailure) -> [Game] {
     var retried = false
     while true {
-      do throws(SupplierFailure) {
+      do throws(ProviderFailure) {
         let output = try await connection.call { try await client.games(body: .plainText(HTTPBody(query))) }
         switch output {
         case .ok(let ok): return try await connection.decoded { try ok.body.json }
@@ -230,7 +230,7 @@ struct IGDBSupplier: DataSupplier {
 actor TwitchTokens {
   nonisolated let clientID: String
   private let clientSecret: String
-  private let connection: SupplierConnection
+  private let connection: ProviderConnection
   private let client: TwitchAPI.Client
   private var current: (token: String, expires: ContinuousClock.Instant)?
   private var inFlight: Task<String, any Error>?
@@ -238,18 +238,18 @@ actor TwitchTokens {
   /// A token younger than this that IGDB refuses isn't replaced: the credentials are wrong.
   private let minimumAge: Duration
 
-  init(clientID: String, clientSecret: String, connection: SupplierConnection, minimumAge: Duration = .seconds(60)) {
+  init(clientID: String, clientSecret: String, connection: ProviderConnection, minimumAge: Duration = .seconds(60)) {
     self.minimumAge = minimumAge
     self.clientID = clientID
     self.clientSecret = clientSecret
     self.connection = connection
     self.client = TwitchAPI.Client(
       serverURL: try! TwitchAPI.Servers.Server1.url(),
-      transport: SupplierTransport(connection: connection)
+      transport: ProviderTransport(connection: connection)
     )
   }
 
-  func token() async throws(SupplierFailure) -> String {
+  func token() async throws(ProviderFailure) -> String {
     if let current, current.expires > .now { return current.token }
     let task: Task<String, any Error>
     if let inFlight {
@@ -264,11 +264,11 @@ actor TwitchTokens {
       return token
     } catch {
       if inFlight == task { inFlight = nil }
-      throw error as? SupplierFailure ?? .failed("token")
+      throw error as? ProviderFailure ?? .failed("token")
     }
   }
 
-  private func fetch() async throws(SupplierFailure) -> String {
+  private func fetch() async throws(ProviderFailure) -> String {
     let (client, clientID, clientSecret) = (self.client, self.clientID, self.clientSecret)
     let output = try await connection.call {
       try await client.token(
