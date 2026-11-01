@@ -15,9 +15,9 @@ exists: M4's end-to-end run waits only on a host and a device.
 1. **M5, next task: T5.3 manifests** (`tasks/plan.md`, M5; D-27 says what changed from the proposal and why). Then
    T5.4 caches by licence, T5.5 ledger, budget and kill switch. The owner's answers: keep the cost data and group it
    later; assume some sources will be paid; one repo.
-2. **tegola D-76 (PR #19): the proposal's product half**, recorded for the owner to decide: free-tier caps, type
-   packs, a subscription (sections 05–06), and the ledger's per-install pseudonym. It conflicts with tegola D-25 and
-   ADR-0001. Merge the PR once its CI is green; the decisions stay the owner's.
+2. **Owner: tegola D-76** (merged, PR #19): the proposal's product half, recorded for the owner to decide: free-tier
+   caps, type packs, a subscription (sections 05–06), and the ledger's per-install pseudonym. It conflicts with
+   tegola D-25 and ADR-0001.
 3. **Owner, keys:** register the providers' keys (`deploy/env.example`, "Lookup sources"): a MusicBrainz contact, a
    Twitch application for IGDB, a ScreenScraper developer account, a BoardGameGeek XML API token. Then, with the
    keys, re-record `Tests/TegolaServerTests/ProviderFixtures.swift` from the live APIs: they're hand-written from the
