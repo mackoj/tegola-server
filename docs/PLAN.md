@@ -110,6 +110,7 @@ volumetric abuse; a curious operator reading logs.
 | Browser-based misuse | `default-src 'none'` CSP, `nosniff`, `DENY` framing, `same-origin` CORP, no CORS headers | `EdgeMiddleware.addSecurityHeaders` |
 | Downgrade to HTTP | HSTS on every response; TLS at the proxy; loopback bind | `EdgeMiddleware`, §6 |
 | Secrets in the repo | Environment only; `.env` ignored; secret scan in CI | `scripts/secret-scan.sh` |
+| A moved image or action tag | Images pinned by digest, actions by commit SHA; Dependabot bumps them through CI | `scripts/pin-check.sh`, D-20 |
 | A tampered trust anchor | Apple's root pinned in source, its SHA-256 fingerprint checked by a test | `AppleRootCA`, `appleRootIsPinned` |
 
 **Accepted for now** (D-9, D-5): rate-limit buckets live in memory, so limits apply per instance. App Attest's

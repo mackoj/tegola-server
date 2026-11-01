@@ -270,5 +270,23 @@ critical or high. Every finding is fixed here, except the two listed under "Left
   - `docker-smoke.sh`: a wrong database password exits 1 with the reason in the log and never the password.
 - **Dependabot** now watches the GitHub Actions, the Dockerfile and Compose images, and the Swift packages.
 
-**Left open.** Pinning actions and images by SHA or digest instead of tag: Dependabot keeps the tags current, and
-pinning is a decision to take with the hosting. Shared rate limits for several instances (D-9).
+**Left open.** Pinning actions and images by SHA or digest instead of tag (since done: D-20). Shared rate limits for
+several instances (D-9).
+
+### D-20 · Everything the build pulls is pinned
+
+**Gap.** D-19 left the images and actions on tags. A tag can be moved: the same Dockerfile could build on a different
+base tomorrow, and a re-pointed action tag would run with the job's token. Nothing about it depends on the host, so it
+needn't wait for PLAN §9.
+
+**Decision.** Each image is written `tag@sha256:<index digest>` (the multi-arch index, so the Mac and amd64 both
+resolve), and each action `owner/action@<commit SHA> # vX.Y.Z`. This covers the Dockerfile's two stages, the Compose
+images (Postgres, Caddy) and CI's own (the `swift` container, the Postgres service), and `docker-smoke.sh` takes its
+Postgres from `docker-compose.yml`. The tag stays for people and for Dependabot, which bumps tag and digest (or SHA and
+comment) together in one PR that CI must pass. The digests were read from Docker Hub and from `mirror.gcr.io`, and
+matched.
+
+`scripts/pin-check.sh`, in `scripts/ci.sh`, fails on an unpinned image or action, and on one image carrying two
+digests across files. Dependabot doesn't update a workflow's `container:` and `services:` images, so a bump of the
+Dockerfile's `swift` or Compose's `postgres` fails that check until CI's copy is moved too, in the same PR. That keeps
+CI testing on the image that ships.

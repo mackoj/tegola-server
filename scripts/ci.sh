@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The full gate, as CI runs it: tests, format lint, contract lint, contract drift, secret scan.
+# The full gate, as CI runs it: tests, format lint, contract lint, contract drift, secret scan, pins.
 # Writes build/ci-summary.md. Contract lint needs Node (npx); it's skipped with a note when Node is missing.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -20,5 +20,6 @@ if command -v npx >/dev/null 2>&1; then step contract-lint scripts/lint-api.sh
 else echo "- ⏭ contract-lint (no Node)" >> "$SUMMARY"; fi
 step contract-drift scripts/sync-contract.sh --check
 step secrets scripts/secret-scan.sh
+step pins scripts/pin-check.sh
 cat "$SUMMARY"
 exit $STATUS

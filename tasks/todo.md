@@ -27,7 +27,8 @@ Plan: `tasks/plan.md`, M2. Report: `docs/milestones/M2.md`.
 - [x] T2.7 Docs and report
 - [x] Separate review agents over M1 and M2 (security; correctness and contract). Fixes: D-19, PR #5
 - [x] Merge tegola PR #10 (revoked key, tegola D-55)
-- [ ] Merge tegola-server PR #5 once its CI is green
+- [x] Merge tegola-server PR #5 once its CI is green
+- [x] Pin images by digest and actions by SHA, `scripts/pin-check.sh` (D-20)
 
 ## M3 · first sources
 

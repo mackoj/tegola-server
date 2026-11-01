@@ -66,6 +66,7 @@ curl https://<domain>/v1/health
 - **Update:** `git pull && docker compose up -d --build`. The server stops gracefully (15 s), migrates the schema
   before serving again, and keeps every key (D-17).
 - **Logs:** `docker compose logs tegola-server`. One `request` line per call (method, route template, status, ms), plus `auth failed` / `attestation rejected` with a reason code. Never content, IPs or key ids (D-15). Watch the rate of `auth failed` and of `status=429`.
+- **Base-image updates:** every image is pinned by digest (D-20). Dependabot opens a weekly PR when a tag moves; once CI is green, merge it, then update as above.
 - **Rollback:** check out the previous commit and `docker compose up -d --build`.
 - **Behind a proxy that intercepts TLS** (some CI or sandboxes): `DOCKER_PROXY_CA=/path/ca.pem scripts/docker-smoke.sh`, or `docker build --secret id=proxy_ca,src=/path/ca.pem …`. The CA is used only to fetch packages and never reaches the image.
 
@@ -73,4 +74,3 @@ curl https://<domain>/v1/health
 
 - More than one server instance needs shared rate limits first (D-9). Keys and challenges are already shared.
 - No metrics endpoint. Monitoring reads the logs (PLAN §6).
-- Image pinning by digest and automatic base-image updates: decide with the host (Dependabot or Renovate can pin and bump `FROM` lines).

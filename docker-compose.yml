@@ -33,7 +33,7 @@ services:
     stop_grace_period: 15s
 
   postgres:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
     environment:
       POSTGRES_USER: tegola
       POSTGRES_DB: tegola
@@ -59,7 +59,7 @@ services:
     restart: unless-stopped
 
   caddy:
-    image: caddy:2.10-alpine
+    image: caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
     # Only the domain: the server's secrets (debug token, source keys) never reach the proxy.
     environment:
       TEGOLA_DOMAIN: ${TEGOLA_DOMAIN:?set TEGOLA_DOMAIN in .env}

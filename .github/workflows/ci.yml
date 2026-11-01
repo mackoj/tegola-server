@@ -10,11 +10,11 @@ permissions:
 jobs:
   linux:
     runs-on: ubuntu-latest
-    container: swift:6.4-noble
+    container: swift:6.4-noble@sha256:bca121f6eb59fd80340d1296887b2698ed8f3eb9eca7d80c181f8af769dc7ee0
     # The store tests run against a real Postgres (StoreTests, D-17).
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres:17-alpine@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
         env:
           POSTGRES_USER: tegola
           POSTGRES_PASSWORD: tegola-ci
@@ -22,16 +22,16 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U tegola" --health-interval 5s --health-timeout 3s --health-retries 12
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
       # The contract's home, for the drift check (DECISIONS D-1). Required: without it the check would compare nothing.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: mackoj/tegola
           path: tegola
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
       - name: Toolchain
@@ -41,7 +41,7 @@ jobs:
           TEGOLA_DIR: tegola
           TEGOLA_TEST_DATABASE_URL: postgres://tegola:tegola-ci@postgres:5432/tegola_test?sslmode=disable
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE" && scripts/ci.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: ci-logs
@@ -50,12 +50,12 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
       - name: Image and stack smoke test
         run: scripts/docker-smoke.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: docker-logs

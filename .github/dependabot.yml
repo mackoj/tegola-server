@@ -1,5 +1,7 @@
-# Weekly updates for what the build trusts by tag: GitHub Actions, the Dockerfile's base images, the Compose images,
-# and the Swift packages (DECISIONS D-19). Each update is a PR that CI's gate and Docker smoke test must pass.
+# Weekly updates for GitHub Actions, the Dockerfile's base images, the Compose images and the Swift packages (D-19).
+# Images are pinned by digest and actions by SHA (D-20): a bump moves tag and pin together. Each update is a PR that
+# CI's gate and Docker smoke test must pass. CI's own `container:` and `services:` images aren't bumped by Dependabot:
+# move them in the same PR (scripts/pin-check.sh fails until they match).
 version: 2
 updates:
   - package-ecosystem: github-actions

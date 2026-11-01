@@ -40,11 +40,12 @@ check "refuses a debug token in production (exit 78)" "78" "$?"
 docker run --rm -e TEGOLA_APP_ID=$APP_ID "$IMAGE" > /dev/null 2>&1
 check "refuses production without TEGOLA_DATABASE_URL (exit 78)" "78" "$?"
 
-# Production needs a database: a throwaway Postgres on a private network.
+# Production needs a database: a throwaway Postgres on a private network, the image Compose pins (D-20).
+PG_IMAGE=$(awk '$1 == "image:" && $2 ~ /^postgres:/ {print $2; exit}' docker-compose.yml)
 net=tegola-smoke-$$
 docker network create "$net" > /dev/null
 db=$(docker run -d --network "$net" --network-alias postgres -e POSTGRES_USER=tegola -e POSTGRES_DB=tegola \
-  -e POSTGRES_PASSWORD=smoke postgres:17-alpine)
+  -e POSTGRES_PASSWORD=smoke "$PG_IMAGE")
 for _ in $(seq 1 30); do docker exec "$db" pg_isready -U tegola -q 2> /dev/null && break; sleep 1; done
 cid=$(docker run -d --network "$net" --read-only --cap-drop ALL --security-opt no-new-privileges \
   -p 127.0.0.1:18080:8080 -e TEGOLA_APP_ID=$APP_ID \
