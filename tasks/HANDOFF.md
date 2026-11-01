@@ -4,11 +4,11 @@ The state of the work for whoever picks it up next: a new session, another agent
 it short and current.
 
 **Updated:** 2026-11-01. M1, M2 and the review's fixes (D-19) are merged (PRs #1–#5). Images and actions are now
-pinned (D-20), on `claude/tegola-hummingbird-bff-9ad714`, open as PR #6.
+pinned (D-20), on `claude/tegola-hummingbird-bff-9ad714`, open as PR #11.
 
 ## Resume here (in this order)
 
-1. **tegola-server PR #6** (this branch): pinning (D-20). If its `linux` and `docker` jobs are green, merge it.
+1. **tegola-server PR #11** (this branch): pinning (D-20). If its `linux` and `docker` jobs are green, merge it.
 2. **Dependabot PRs**, weekly: an image bump that touches the Dockerfile's `swift` or Compose's `postgres` fails
    `pins` until CI's copy in `.github/workflows/ci.yml` carries the same digest. Move it in the same PR.
 3. **Owner answers**, deferred until release: sources per type, hosting and domain, Team ID, shared caches (PLAN §9;
