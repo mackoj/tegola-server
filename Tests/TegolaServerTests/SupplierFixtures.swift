@@ -110,7 +110,8 @@ enum Fixture {
        "artist-credit":[{"name":"Radiohead","artist":{"id":"a74b1b7f-71a5-4011-9441-d0b5e4122711","name":"Radiohead"}}],
        "release-group":{"id":"\(mbGroup)","primary-type":"Album","title":"OK Computer"},
        "label-info":[{"catalog-number":"NODATA 02","label":{"id":"x","name":"Parlophone"}}],
-       "media":[{"format":"12\\" Vinyl","disc-count":1,"track-count":6},{"format":"12\\" Vinyl","disc-count":1,"track-count":6}]},
+       "media":[{"format":"12\\" Vinyl","disc-count":1,"track-count":6},{"format":"12\\" Vinyl","disc-count":1,"track-count":6}],
+       "cover-art-archive":{"artwork":true,"count":3,"front":true,"back":true,"darkened":false}},
       {"id":"00000000-1111-4222-8333-444444444444","score":61,"title":"OK Computer OKNOTOK","date":"2017-06-23",
        "barcode":"634904086528","media":[{"format":"CD"}]}
     ]}
@@ -121,7 +122,7 @@ enum Fixture {
     {"count":2,"offset":0,"releases":[
       {"id":"\(mbRelease)","score":100,"title":"OK Computer","date":"1997-05-21","country":"GB",
        "artist-credit":[{"name":"Radiohead"}],"release-group":{"id":"\(mbGroup)","title":"OK Computer"},
-       "media":[{"format":"CD"}]},
+       "media":[{"format":"CD"}],"cover-art-archive":{"artwork":true,"count":1,"front":false,"back":true}},
       {"id":"99999999-8888-4777-8666-555555555555","score":90,"title":"OK Computer","date":"2009-03-24",
        "country":"US","artist-credit":[{"name":"Radiohead"}],"release-group":{"id":"\(mbGroup)"},
        "media":[{"format":"CD"},{"format":"CD"}]}

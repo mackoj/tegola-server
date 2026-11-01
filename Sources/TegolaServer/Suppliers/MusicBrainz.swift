@@ -17,6 +17,10 @@ struct MusicBrainzSupplier: DataSupplier {
   let idPrefix = "musicbrainz:"
   let answersBarcodes = true
 
+  /// The Cover Art Archive serves the release's front image at a stable URL; the app follows its redirect to the
+  /// Internet Archive. Images are listed only when the release says it has a front, so no URL is a known 404.
+  static let imageHosts: Set<String> = ["coverartarchive.org"]
+
   static let source = Components.Schemas.Source.named(
     "MusicBrainz",
     url: "https://musicbrainz.org",
@@ -154,6 +158,7 @@ struct MusicBrainzSupplier: DataSupplier {
       subtitle: TextMatch.clean(Self.artist(release)),
       year: TextMatch.year(release.date),
       fields: .init(additionalProperties: fields),
+      images: Self.images(release, mbid: mbid),
       confidence: confidence,
       reasons: reasons,
       sources: [Self.source],
@@ -167,6 +172,16 @@ struct MusicBrainzSupplier: DataSupplier {
   static func mbid(_ raw: String?) -> String? {
     guard let raw, let uuid = UUID(uuidString: raw) else { return nil }
     return uuid.uuidString.lowercased()
+  }
+
+  /// The front cover, from the Cover Art Archive, when the release has one: 500 px and a 250 px thumbnail.
+  static func images(_ release: Release, mbid: String) -> [Components.Schemas.Image]? {
+    guard release.coverArtArchive?.front == true else { return nil }
+    let base = "https://coverartarchive.org/release/\(mbid)/front"
+    var images: [Components.Schemas.Image] = []
+    if let url = allowedImageURL("\(base)-500", hosts: imageHosts) { images.append(.init(role: .front, url: url)) }
+    if let url = allowedImageURL("\(base)-250", hosts: imageHosts) { images.append(.init(role: .thumbnail, url: url)) }
+    return images.isEmpty ? nil : images
   }
 
   static func artist(_ release: Release) -> String? {

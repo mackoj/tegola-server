@@ -367,8 +367,8 @@ buckets then apply to imports unchanged. OCR text searches its first three lines
 **The tests' answers are hand-written** from each provider's documented format: this environment can't reach the
 providers. They should be re-recorded from the live APIs once the keys exist.
 
-**Left for later.** Cover art for music (the Cover Art Archive, one more request per release, at MusicBrainz's pace).
-A cache shared by several instances, with the shared rate limits (D-9).
+**Left for later.** Cover art for music (done without the extra request, D-25). A cache shared by several
+instances, with the shared rate limits (D-9).
 
 ### D-23 · Every supplier has an OpenAPI description; one protocol for any supplier
 
@@ -445,3 +445,20 @@ only through Identify, and the server never keeps it.
   assertion, which covers the body, is checked after. A secured request that's both unsigned and too large is now
   `401`, not `413`.
 
+
+### D-25 · Music cover art from the Cover Art Archive, without a request
+
+**Direction.** HANDOFF's open options: cover art for music. D-22 left it out as one more request per release, at
+MusicBrainz's pace.
+
+**Decision.**
+- **No extra request.** A MusicBrainz release carries `cover-art-archive` (`artwork`, `front`, `count`). When `front`
+  is true, a music candidate lists `https://coverartarchive.org/release/<mbid>/front-500` (role `front`) and
+  `…/front-250` (role `thumbnail`). The mbid is the UUID already checked (D-22); the URLs go through the same host
+  check as IGDB's and BGG's images, with `coverartarchive.org` the only host.
+- **Only a known front.** No flag, `front: false` or a back alone: no images, so the app is never handed a known 404.
+- **The redirect is the app's.** The archive answers with a redirect to the Internet Archive. The server never fetches
+  the image, so its no-redirect rule for suppliers (D-23) doesn't apply; the app follows it when it loads the image.
+  The contract needs no change: `Candidate.images` already exists. The app doesn't show candidate images yet.
+- **To check when the fixtures are re-recorded:** that release search, and not only lookup and browse, returns
+  `cover-art-archive`. If it doesn't, search candidates simply have no images.

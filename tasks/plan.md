@@ -57,8 +57,8 @@ The owner's choice (2026-11-01, D-22): MusicBrainz, IGDB + ScreenScraper, BoardG
 | T3.8 OpenAPI per supplier | `api/sources/*.openapi.yaml`, a generated client per supplier, `DataSupplier`, `SupplierTransport` (D-23) | `SupplierTests` through the generated clients |
 | T3.7 Docs | D-22; PLAN §4, §9; README, DEPLOY, env.example; `docs/milestones/M3.md` | Read-through |
 
-Left for later: re-recording the fixtures against the live APIs once keys exist; cover art for music (one more
-MusicBrainz call per release); a cache shared by several instances.
+Left for later: re-recording the fixtures against the live APIs once keys exist; cover art for music (done, D-25); a
+cache shared by several instances.
 
 ## M4 · production
 

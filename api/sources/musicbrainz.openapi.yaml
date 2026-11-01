@@ -47,6 +47,16 @@ components:
         release-group: { $ref: "#/components/schemas/ReleaseGroup" }
         label-info: { type: array, items: { $ref: "#/components/schemas/LabelInfo" } }
         media: { type: array, items: { $ref: "#/components/schemas/Medium" } }
+        cover-art-archive: { $ref: "#/components/schemas/CoverArtArchive" }
+    CoverArtArchive:
+      description: |
+        What the Cover Art Archive holds for the release (https://musicbrainz.org/doc/Cover_Art_Archive/API). The
+        images themselves are at https://coverartarchive.org/release/{mbid}/front-{250,500}.
+      type: object
+      properties:
+        artwork: { type: boolean }
+        front: { type: boolean }
+        count: { type: integer }
     ArtistCredit:
       type: object
       properties:
