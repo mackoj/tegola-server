@@ -26,6 +26,8 @@ change in tegola (or the reverse), make it there too, on its own branch and PR, 
   update it last.
 - **Toolchain:** on the Mac, `xcrun swift …` (swiftly's `swift` breaks nothing here, but the scripts use `xcrun` for
   parity with tegola). On Linux and in cloud sessions, `swift`.
+- **Run:** `scripts/run.sh [--mock] [--quiet]`, a development server with its log in the terminal (D-28); `--mock`
+  answers from `mocks/` and made-up releases, for testing the app.
 - **Tests:** `scripts/test.sh [<Suite>]` (set `TEGOLA_TEST_DATABASE_URL` to run the store tests on Postgres too, as
   CI does); `scripts/ci.sh` runs the full gate (tests, `swift format lint --strict`, contract lint, contract drift,
   secret scan, pins). `scripts/docker-smoke.sh` checks the image and the Caddy stack. CI runs both on every push.

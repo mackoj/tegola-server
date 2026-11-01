@@ -144,6 +144,9 @@ fraud-metric receipts aren't checked yet.
 - **Logs** to stdout as `key=value` lines: one per request, plus `auth failed` and `attestation rejected` with a
   reason code, for monitoring abuse without content.
 - **Health:** `GET /v1/health` (public, rate-limited) for the platform's probe.
+- **On a developer's machine:** `scripts/run.sh` runs a development server in one command, with its log in the
+  terminal; at debug level each lookup says which sources it asked and what they did. `scripts/run.sh --mock`
+  answers from `mocks/` and made-up releases, to test the app without keys or network (D-28).
 
 ## 7. Testing
 
