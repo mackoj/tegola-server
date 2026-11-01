@@ -3,20 +3,46 @@
 The state of the work for whoever picks it up next: a new session, another agent, or the owner. Read this first, keep
 it short and current.
 
-**Updated:** 2026-11-01. M1, M2, the review's fixes (D-19), pinning (D-20) and Postgres 18 (D-21) are merged (PRs
-#1–#11). `main` is green (CI run 39), and no PR is open. Nothing more moves without the owner's answers (item 2).
+**Updated:** 2026-11-01. M1, M2, D-19 to D-21 are merged (PRs #1–#12). **M3 (sources) is in progress** on
+`claude/tegola-hummingbird-bff-9ad714`: code, tests and docs are pushed (`a810cc2`, `12fe9c1`), no PR opened yet.
 
 ## Resume here (in this order)
 
-1. **Dependabot PRs**, weekly: merge one only once both `linux` and `docker` are green (the `docker` job takes about
+1. **M3, restructure the sources around OpenAPI (the owner's direction, 2026-11-01).** Not started. Two rules:
+   - **Each data source has an OpenAPI file**: the supplier's own when it publishes one, otherwise one we write. Put
+     them next to the contract, e.g. `api/sources/<source>.openapi.yaml`, and generate each client with
+     swift-openapi-generator (`generate: [types, client]`), one target or generator config per source.
+     As far as known, none of the four publishes an official spec, so expect to write all four: MusicBrainz WS/2
+     (JSON), IGDB v4 (POST with a text/plain Apicalypse body), the Twitch client-credentials token endpoint,
+     ScreenScraper api2 (`jeuRecherche.php`, `jeuInfos.php`; credentials as query parameters), BoardGameGeek
+     xmlapi2 (`search`, `thing`). Check each supplier for an official one first. The generator doesn't decode XML:
+     BGG's operations will answer a raw body that `ItemsReader` still parses.
+   - **One protocol represents any data supplier abstractly.** Today that's `CatalogueSource` in
+     `Sources/TegolaServer/Sources/SourcesLookupService.swift`; consider renaming it (`DataSupplier`) and keeping
+     everything supplier-specific behind it. The generated clients replace the hand-built `OutboundRequest`s, but the
+     shared behaviour must stay: `SourceConnection`'s pace, breaker, timeout and body cap, and the replayable
+     transport. Put them in a `ClientMiddleware` and a `ClientTransport` (swift-openapi-runtime) over
+     AsyncHTTPClient, so tests replay fixtures as they do now.
+   - Keep every D-22 security rule and its test: query escaping, ids checked before URLs, the Twitch secret in a
+     body, ScreenScraper media URLs dropped, the image host allowlist, XML without external entities, logs without
+     content. Then update D-22 (or add D-23), `docs/milestones/M3.md` and `tasks/todo.md`.
+2. **M3, the review.** A separate review agent was started on `a810cc2` at the end of the last session; its findings
+   were not recorded before the session was cleared. Re-run it after item 1, on the whole M3 diff
+   (`git diff origin/main`), then fix what it finds.
+3. **M3, the Docker smoke test** was re-running when the session was cleared, with the AsyncHTTPClient dependency in
+   the image. Re-run `scripts/docker-smoke.sh` (start `dockerd` first, see below) and record the result in
+   `docs/milestones/M3.md`, "Verification".
+4. **M3, the PR**: open it (draft) once 1–3 are done and CI is green, then merge.
+5. **Owner, keys**: register the sources' keys (`deploy/env.example`, "Lookup sources"). Then re-record the
+   fixtures from the live APIs: they're hand-written from the documented formats, since this sandbox can't reach the
+   providers (D-22).
+6. **Dependabot PRs**, weekly: merge one only once both `linux` and `docker` are green (the `docker` job takes about
    ten minutes; #8 was merged before it failed). An image bump that touches the Dockerfile's `swift` or Compose's
    `postgres` fails `pins` until CI's copy in `.github/workflows/ci.yml` carries the same digest: move it in the same
    PR. A Postgres major bump needs the upgrade step in D-21 once a deployment exists.
-2. **Owner answers**, deferred until release: sources per type, hosting and domain, Team ID, shared caches (PLAN §9;
-   persistence is answered: Postgres, D-17). `docs/DEPLOY.md` says where each answer goes.
-3. **M3, sources** (once the owner picks them): one per launch type behind `LookupService`, with recorded-response
-   tests. `matchBatch` already charges one token per row (D-19).
-4. **M4, production**, paced by tegola's M6 (the app's lookup client).
+7. **Owner answers**, deferred until release: hosting and domain, Team ID, shared caches (PLAN §9; persistence and
+   sources are answered, D-17, D-22). `docs/DEPLOY.md` says where each answer goes.
+8. **M4, production**, paced by tegola's M6 (the app's lookup client).
 
 The owner's working style: carry on without asking. Use a worktree per task, branch, commit, push, open the PR, wait
 for green CI, merge. Stop only for decisions that are the owner's (PLAN §9). To keep the PR description free of the
@@ -25,10 +51,14 @@ update.
 
 ## Where things stand
 
-- **Spec:** `docs/PLAN.md`; decisions D-1 to D-21 in `docs/DECISIONS.md`.
+- **Spec:** `docs/PLAN.md`; decisions D-1 to D-22 in `docs/DECISIONS.md`.
 - **M1 (foundation):** the contract's seven operations served by Hummingbird 2 from generated code. App Attest
   registration and assertions are verified end to end, with every control of PLAN §5 and no lookup source yet (D-12).
   Report: `docs/milestones/M1.md`.
+- **M3 (sources, in progress):** MusicBrainz (music: barcode and words), IGDB + ScreenScraper (video games: words),
+  BoardGameGeek (board games: words), none for `thing`; the owner's choice (D-22). Each turns on with its environment
+  variables. Code in `Sources/TegolaServer/Sources/`, tests in `SourceTests.swift` with hand-written fixtures in
+  `SourceFixtures.swift`. `scripts/ci.sh` green: 114 tests in 17 suites. Report draft: `docs/milestones/M3.md`.
 - **M2 (persistence):** keys and challenges in Postgres (`PostgresStore`), required in production. The Compose stack
   runs Postgres on an internal-only network. Report: `docs/milestones/M2.md`.
 - **Review (D-19):**
