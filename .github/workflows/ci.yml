@@ -22,11 +22,11 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U tegola" --health-interval 5s --health-timeout 3s --health-retries 12
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       # The contract's home, for the drift check (DECISIONS D-1). Required: without it the check would compare nothing.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: mackoj/tegola
           path: tegola
@@ -50,7 +50,7 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Image and stack smoke test
