@@ -47,7 +47,7 @@ struct BoardGameGeekSupplier: DataSupplier {
     }
     let hits: [Item]
     switch output {
-    case .ok(let ok): hits = try await parse(try await connection.decoded { try ok.body.xml })
+    case .ok(let ok): hits = try await parse(Self.body(ok.body))
     case .undocumented(let status, _): throw .failed("http-\(status / 100)xx")
     }
     // The search answers names only; keep the closest few, then ask for their details in one request.
@@ -91,8 +91,21 @@ struct BoardGameGeekSupplier: DataSupplier {
     let output = try await connection.call { try await client.thing(query: .init(id: list, stats: ._1)) }
     switch output {
     case .ok(let ok):
-      return try await parse(try await connection.decoded { try ok.body.xml }).filter { $0.type == "boardgame" }
+      return try await parse(Self.body(ok.body)).filter { $0.type == "boardgame" }
     case .undocumented(let status, _): throw .failed("http-\(status / 100)xx")
+    }
+  }
+
+  /// The raw answer, whichever XML type BGG labelled it with (it says `text/xml`).
+  static func body(_ body: BoardGameGeekAPI.Operations.Search.Output.Ok.Body) -> HTTPBody {
+    switch body {
+    case .textXml(let raw), .xml(let raw): raw
+    }
+  }
+
+  static func body(_ body: BoardGameGeekAPI.Operations.Thing.Output.Ok.Body) -> HTTPBody {
+    switch body {
+    case .textXml(let raw), .xml(let raw): raw
     }
   }
 
@@ -112,6 +125,9 @@ struct BoardGameGeekSupplier: DataSupplier {
   }
 
   static func parse(_ data: Data) -> [Item]? {
+    // UTF-8 without NULs only, so the declaration check below sees what the parser will (libxml2 would also read
+    // UTF-16, where these bytes look different).
+    guard !data.contains(0), String(data: data, encoding: .utf8) != nil else { return nil }
     let declarations = [Data("<!DOCTYPE".utf8), Data("<!ENTITY".utf8), Data("<!doctype".utf8)]
     guard declarations.allSatisfy({ data.range(of: $0) == nil }) else { return nil }
     let reader = ItemsReader()

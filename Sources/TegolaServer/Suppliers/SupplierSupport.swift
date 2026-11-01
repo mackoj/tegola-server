@@ -52,7 +52,10 @@ package protocol HTTPTransport: Sendable {
 struct AsyncHTTPTransport: HTTPTransport {
   static let client = HTTPClient(
     eventLoopGroup: HTTPClient.defaultEventLoopGroup,
-    configuration: .init(redirectConfiguration: .disallow)
+    configuration: .init(
+      redirectConfiguration: .disallow,
+      timeout: .init(connect: .seconds(5), read: .seconds(8))
+    )
   )
 
   func send(_ request: OutboundRequest, timeout: Duration, maximumBytes: Int) async throws
@@ -65,7 +68,10 @@ struct AsyncHTTPTransport: HTTPTransport {
     if let body = request.body { outbound.body = .bytes(ByteBuffer(bytes: body)) }
     let seconds = Int64(timeout.components.seconds)
     let response = try await Self.client.execute(outbound, timeout: .seconds(max(1, seconds)))
-    let buffer = try await response.body.collect(upTo: maximumBytes)
+    let buffer: ByteBuffer
+    do { buffer = try await response.body.collect(upTo: maximumBytes) } catch is NIOTooManyBytesError {
+      throw SupplierFailure.failed("too-large")
+    }
     var headers: [String: String] = [:]
     for header in response.headers { headers[header.name.lowercased()] = header.value }
     return OutboundResponse(status: Int(response.status.code), headers: headers, body: Data(buffer.readableBytesView))
@@ -135,12 +141,16 @@ actor Pacer {
 
 // MARK: - circuit breaker
 
-/// After `threshold` failures in a row, a supplier is skipped for `coolDown`; one success closes it again.
+/// After `threshold` failures in a row, a supplier is skipped for `coolDown`; then one request, and only one, probes
+/// it, and its success closes the breaker. A provider that said "busy" (429, 503, ScreenScraper's quotas) is also
+/// skipped until its `Retry-After` has passed, so retries don't keep knocking on a closed door.
 actor CircuitBreaker {
   let threshold: Int
   let coolDown: Duration
   private var failures = 0
   private var openUntil: ContinuousClock.Instant?
+  private var probing = false
+  private var busyUntil: ContinuousClock.Instant?
 
   init(threshold: Int = 5, coolDown: Duration = .seconds(30)) {
     self.threshold = threshold
@@ -148,22 +158,39 @@ actor CircuitBreaker {
   }
 
   func check() throws {
-    guard let openUntil else { return }
     let now = ContinuousClock.now
+    if let busyUntil, now < busyUntil {
+      throw SupplierFailure.busy(retryAfter: Int((busyUntil - now).components.seconds) + 1)
+    }
+    guard let openUntil else { return }
     if now < openUntil {
       throw SupplierFailure.circuitOpen(retryAfter: Int((openUntil - now).components.seconds) + 1)
     }
-    self.openUntil = nil  // half-open: the next call decides
+    // Half-open: one probe goes through; the others wait for its answer.
+    guard !probing else { throw SupplierFailure.circuitOpen(retryAfter: 1) }
+    probing = true
   }
 
   func success() {
     failures = 0
     openUntil = nil
+    probing = false
   }
 
   func failure() {
     failures += 1
+    probing = false
     if failures >= threshold { openUntil = .now + coolDown }
+  }
+
+  /// The probe's slot is given back without a verdict (our own pace refused it, or it was cancelled).
+  func release() {
+    probing = false
+  }
+
+  func busy(for seconds: Int) {
+    probing = false
+    busyUntil = .now + .seconds(seconds)
   }
 }
 
@@ -258,15 +285,33 @@ struct SupplierConnection: Sendable {
   func exchange(_ request: OutboundRequest) async throws(SupplierFailure) -> OutboundResponse {
     do {
       try await breaker.check()
-      try await pacer.acquire()
     } catch let failure as SupplierFailure {
       throw failure
     } catch {
       throw .failed("cancelled")
     }
+    do {
+      try await pacer.acquire()
+    } catch let failure as SupplierFailure {
+      await breaker.release()
+      throw failure
+    } catch {
+      await breaker.release()
+      throw .failed("cancelled")
+    }
     let response: OutboundResponse
     do {
-      response = try await transport.send(request, timeout: timeout, maximumBytes: maximumBytes)
+      // The whole exchange, body included, within the timeout, whatever the transport does with its own.
+      let (transport, timeout, maximumBytes) = (self.transport, self.timeout, self.maximumBytes)
+      response = try await withThrowingTaskGroup(of: OutboundResponse.self) { group in
+        group.addTask { try await transport.send(request, timeout: timeout, maximumBytes: maximumBytes) }
+        group.addTask {
+          try await Task.sleep(for: timeout)
+          throw SupplierFailure.failed("timeout")
+        }
+        defer { group.cancelAll() }
+        return try await group.next()!
+      }
     } catch let failure as SupplierFailure {
       await record(failure)
       throw failure
@@ -326,9 +371,15 @@ struct SupplierConnection: Sendable {
     }
   }
 
-  /// Logs the supplier and the reason, never the query or the answer.
+  /// Logs the supplier and the reason, never the query or the answer. A busy provider is remembered until its
+  /// `Retry-After`; an answer too large for one query says nothing about the provider's health, so it doesn't count
+  /// towards the breaker (one user's broad search mustn't close a supplier for everyone).
   func record(_ failure: SupplierFailure) async {
-    if case .busy = failure {} else { await breaker.failure() }
+    switch failure {
+    case .busy(let seconds): await breaker.busy(for: seconds)
+    case .failed("too-large"): await breaker.success()  // the provider answered; the query was too broad
+    default: await breaker.failure()
+    }
     logger.warning("source failed", metadata: ["source": "\(name)", "reason": "\(failure.reason)"])
   }
 }

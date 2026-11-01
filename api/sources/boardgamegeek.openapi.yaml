@@ -5,7 +5,7 @@ info:
   description: |
     Written by tegola-server (D-23): BoardGameGeek publishes no OpenAPI description. Source:
     https://boardgamegeek.com/wiki/page/BGG_XML_API2. Answers are XML, which swift-openapi-generator leaves as a raw
-    body: the server parses it itself (`<items>` root required, no DOCTYPE). Requests carry
+    body: the server parses it itself (`<items>` root required, no DOCTYPE). BGG labels them `text/xml`. Requests carry
     `Authorization: Bearer <token>` (an approved application's token), added by a client middleware.
 servers:
   - url: https://boardgamegeek.com/xmlapi2
@@ -20,6 +20,8 @@ paths:
         "200":
           description: "`<items><item type id><name type value/><yearpublished value/></item></items>`"
           content:
+            text/xml:
+              schema: { type: string, contentEncoding: binary }
             application/xml:
               schema: { type: string, contentEncoding: binary }
   /thing:
@@ -32,5 +34,7 @@ paths:
         "200":
           description: "`<items><item type id>` with names, players, times, links, images and statistics."
           content:
+            text/xml:
+              schema: { type: string, contentEncoding: binary }
             application/xml:
               schema: { type: string, contentEncoding: binary }

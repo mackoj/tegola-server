@@ -107,7 +107,9 @@ package struct SuppliersLookupService: LookupService {
     let query = SupplierQuery(
       title: item.title,
       subtitle: item.subtitle,
-      year: item.year,
+      // The contract gives an import row's year no range: one outside the years a ranking compares (a blank CSV
+      // year read as 0, say) is dropped, not refused, and never computed with (tasks/M3-review.md).
+      year: item.year.flatMap { TextMatch.years.contains($0) ? $0 : nil },
       subtype: item.subtype,
       region: item.region,
       limit: 5,

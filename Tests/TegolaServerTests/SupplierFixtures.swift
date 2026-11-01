@@ -13,6 +13,7 @@ final class ReplayTransport: HTTPTransport, @unchecked Sendable {
   struct Route {
     var match: String
     var answers: [OutboundResponse]
+    var delay: Duration = .zero
   }
 
   private let lock = NSLock()
@@ -20,31 +21,41 @@ final class ReplayTransport: HTTPTransport, @unchecked Sendable {
   private var calls: [String: Int] = [:]
   private(set) var requests: [OutboundRequest] = []
 
-  init(_ routes: [(String, [OutboundResponse])]) {
-    self.routes = routes.map { Route(match: $0.0, answers: $0.1) }
+  init(_ routes: [(String, [OutboundResponse])], delays: [String: Duration] = [:]) {
+    self.routes = routes.map { Route(match: $0.0, answers: $0.1, delay: delays[$0.0] ?? .zero) }
   }
 
   convenience init(_ routes: [(String, OutboundResponse)]) {
-    self.init(routes.map { ($0.0, [$0.1]) })
+    self.init(routes.map { ($0.0, [$0.1]) }, delays: [:])
   }
 
   var sent: [OutboundRequest] { lock.withLock { requests } }
 
   func send(_ request: OutboundRequest, timeout: Duration, maximumBytes: Int) async throws -> OutboundResponse {
-    try lock.withLock {
+    let (answer, delay) = try lock.withLock {
       requests.append(request)
       guard let route = routes.first(where: { request.url.absoluteString.contains($0.match) }) else {
         throw URLError(.cannotFindHost)
       }
       let index = calls[route.match, default: 0]
       calls[route.match] = index + 1
-      return route.answers[min(index, route.answers.count - 1)]
+      return (route.answers[min(index, route.answers.count - 1)], route.delay)
     }
+    if delay > .zero { try await Task.sleep(for: delay) }
+    return answer
   }
 }
 
-func ok(_ body: String, headers: [String: String] = [:]) -> OutboundResponse {
-  OutboundResponse(status: 200, headers: headers, body: Data(body.utf8))
+/// A 200, labelled as the providers label theirs: JSON with a charset by default, `xml` for BoardGameGeek's
+/// `text/xml` (the generated clients refuse a content type their description doesn't declare).
+func ok(_ body: String, contentType: String = "application/json; charset=utf-8", headers: [String: String] = [:])
+  -> OutboundResponse
+{
+  OutboundResponse(status: 200, headers: headers.merging(["content-type": contentType]) { $1 }, body: Data(body.utf8))
+}
+
+func xml(_ body: String) -> OutboundResponse {
+  ok(body, contentType: "text/xml; charset=utf-8")
 }
 
 func status(_ code: Int, headers: [String: String] = [:]) -> OutboundResponse {

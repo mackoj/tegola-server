@@ -70,7 +70,7 @@ func query(_ request: OutboundRequest, _ name: String) -> String? {
     #expect(candidates[1].confidence < candidates[0].confidence)
     #expect(field(candidates[1], "format") == .case1("2×CD"))
     let lucene = try #require(transport.sent.first.flatMap { query($0, "query") })
-    #expect(lucene == "release:(ok computer) AND artist:(Radiohead) AND date:1997")
+    #expect(lucene == "release:(ok computer) AND artist:(Radiohead)")
   }
 
   /// Words from the app stay words: Lucene's syntax is escaped and AND/OR/NOT lose their meaning (D-22).
@@ -170,11 +170,22 @@ func query(_ request: OutboundRequest, _ name: String) -> String? {
     #expect(body.hasPrefix(#"search "zelda where id = 1 fields *"; fields "#))
   }
 
+  /// An older token that IGDB refuses (expired early, revoked) is renewed, once.
   @Test func aRefusedTokenIsRenewedOnce() async throws {
     let transport = ReplayTransport([
       ("id.twitch.tv", [ok(Fixture.twitchToken)]), ("api.igdb.com", [status(401), ok(Fixture.igdbGames)]),
     ])
-    let candidates = try await source(transport).search(.init(title: "Ocarina of Time", limit: 5, reason: .title))
+    // A token old enough to have expired early: minimumAge zero stands for "older than a minute".
+    let igdb = IGDBSupplier(
+      connection: testConnection("igdb", transport),
+      tokens: TwitchTokens(
+        clientID: "client-id",
+        clientSecret: "TEGOLA-TEST-SENTINEL-secret",
+        connection: testConnection("twitch", transport),
+        minimumAge: .zero
+      )
+    )
+    let candidates = try await igdb.search(.init(title: "Ocarina of Time", limit: 5, reason: .title))
     #expect(!candidates.isEmpty)
     #expect(transport.sent.filter { $0.url.host == "id.twitch.tv" }.count == 2)
   }
@@ -249,7 +260,7 @@ func query(_ request: OutboundRequest, _ name: String) -> String? {
 
   @Test func searchReadsTheBestGamesDetails() async throws {
     let transport = ReplayTransport([
-      ("xmlapi2/search", ok(Fixture.bggSearch)), ("xmlapi2/thing", ok(Fixture.bggThing)),
+      ("xmlapi2/search", xml(Fixture.bggSearch)), ("xmlapi2/thing", xml(Fixture.bggThing)),
     ])
     let candidates = try await source(transport).search(
       .init(title: "Agricola", subtitle: "Z-Man Games", year: 2007, limit: 5, reason: .title)
@@ -557,17 +568,22 @@ final class RecordingSupplier: DataSupplier, @unchecked Sendable {
 // MARK: - the review's findings (tasks/M3-review.md), each sent as the attack or failure it describes
 
 @Suite struct SupplierReviewTests {
-  /// Finding 1: an import row's year can't overflow the ranking, at the route and in the ranking itself.
-  @Test func anExtremeYearIsRefusedAndCantOverflowTheRanking() async throws {
+  /// Finding 1: an import row's year can't overflow the ranking. The contract gives it no range, so the row is
+  /// answered and its year dropped, not refused (second review).
+  @Test func anExtremeYearIsDroppedAndCantOverflowTheRanking() async throws {
     let contract = ContractTests()
-    for year in ["-9223372036854775808", "9223372036854775807", "1799", "2101"] {
+    for year in ["-9223372036854775808", "9223372036854775807", "0"] {
       let (status, _) = try await contract.post(
         "/v1/types/video-game/match",
         #"{"items":[{"ref":"r","title":"Zelda","year":\#(year)}]}"#,
         lookups: CannedLookups(candidates: [candidate("x", confidence: 0.9)])
       )
-      #expect(status == .badRequest, "year \(year)")
+      #expect(status == .ok, "year \(year)")
     }
+    let recorder = RecordingSupplier()
+    let service = SuppliersLookupService(sources: [recorder])
+    _ = try await service.match(typeID: "music", .init(ref: "r", title: "x", year: .min))
+    #expect(recorder.queries.first?.year == nil)
     let confidence = TextMatch.confidence(
       title: "x",
       candidateTitle: "x",
@@ -597,7 +613,7 @@ final class RecordingSupplier: DataSupplier, @unchecked Sendable {
     let bgg = BoardGameGeekSupplier(
       connection: testConnection(
         "boardgamegeek",
-        ReplayTransport([("xmlapi2", ok("<html><body>Down for maintenance</body></html>"))])
+        ReplayTransport([("xmlapi2", ok("<html><body>Down for maintenance</body></html>", contentType: "text/html"))])
       ),
       token: "TEGOLA-TEST-SENTINEL"
     )
@@ -630,7 +646,7 @@ final class RecordingSupplier: DataSupplier, @unchecked Sendable {
   ])
   func entityDeclarationsAreRefused(_ answer: String) async throws {
     #expect(BoardGameGeekSupplier.parse(Data(answer.utf8)) == nil)
-    let transport = ReplayTransport([("xmlapi2/search", ok(Fixture.bggSearch)), ("xmlapi2/thing", ok(answer))])
+    let transport = ReplayTransport([("xmlapi2/search", xml(Fixture.bggSearch)), ("xmlapi2/thing", xml(answer))])
     let bgg = BoardGameGeekSupplier(
       connection: testConnection("boardgamegeek", transport),
       token: "TEGOLA-TEST-SENTINEL"
@@ -643,7 +659,7 @@ final class RecordingSupplier: DataSupplier, @unchecked Sendable {
   /// Finding 5: a redirect is a failure, and nothing is sent to where it points.
   @Test func aRedirectIsNotFollowed() async throws {
     let transport = ReplayTransport([
-      ("xmlapi2", status(302, headers: ["location": "http://attacker.example/steal"])), ("attacker", ok("<items/>")),
+      ("xmlapi2", status(302, headers: ["location": "http://attacker.example/steal"])), ("attacker", xml("<items/>")),
     ])
     let bgg = BoardGameGeekSupplier(
       connection: testConnection("boardgamegeek", transport),
@@ -667,7 +683,11 @@ final class RecordingSupplier: DataSupplier, @unchecked Sendable {
 
   /// Finding 8: simultaneous first requests share one token fetch.
   @Test func concurrentFirstRequestsFetchOneToken() async throws {
-    let transport = ReplayTransport([("id.twitch.tv", ok(Fixture.twitchToken)), ("api.igdb.com", ok("[]"))])
+    // The token answers after 200 ms, so the 20 callers really arrive while its fetch is in flight.
+    let transport = ReplayTransport(
+      [("id.twitch.tv", [ok(Fixture.twitchToken)]), ("api.igdb.com", [ok("[]")])],
+      delays: ["id.twitch.tv": .milliseconds(200)]
+    )
     let igdb = IGDBSupplier(
       connection: testConnection("igdb", transport),
       tokens: TwitchTokens(
@@ -726,5 +746,107 @@ final class RecordingSupplier: DataSupplier, @unchecked Sendable {
     ] {
       #expect(!text.contains("TEGOLA-TEST-SENTINEL"))
     }
+  }
+}
+
+// MARK: - the second review's findings
+
+/// Throws, or answers after a while, as told.
+struct StubTransport: HTTPTransport {
+  var failure: (any Error)?
+  var delay: Duration = .zero
+
+  func send(_ request: OutboundRequest, timeout: Duration, maximumBytes: Int) async throws -> OutboundResponse {
+    try await Task.sleep(for: delay)
+    if let failure { throw failure }
+    return ok("{}")
+  }
+}
+
+@Suite struct SupplierSecondReviewTests {
+  /// A provider that said "busy" is left alone until its Retry-After.
+  @Test func aBusyProviderIsLeftAloneUntilItsRetryAfter() async throws {
+    let transport = ReplayTransport([("api.screenscraper.fr", status(430))])
+    let supplier = ScreenScraperSupplier(
+      connection: testConnection("screenscraper", transport),
+      credentials: .init(developerID: "dev", developerPassword: "TEGOLA-TEST-SENTINEL")
+    )
+    for _ in 0..<3 { _ = try? await supplier.search(.init(title: "Sonic", limit: 5, reason: .title)) }
+    #expect(transport.sent.count == 1)
+  }
+
+  /// One user's too-broad query doesn't close a supplier for everyone.
+  @Test func anAnswerTooLargeDoesntOpenTheBreaker() async throws {
+    let connection = testConnection("x", StubTransport(failure: SupplierFailure.failed("too-large")))
+    for _ in 0..<8 {
+      await #expect(throws: SupplierFailure.failed("too-large")) {
+        _ = try await connection.exchange(.init(url: URL(string: "https://example.org")!))
+      }
+    }
+  }
+
+  /// The whole exchange is bounded, whatever the transport does.
+  @Test func aSlowAnswerTimesOut() async throws {
+    let connection = SupplierConnection(
+      name: "x",
+      transport: StubTransport(delay: .seconds(30)),
+      interval: .zero,
+      timeout: .milliseconds(50),
+      logger: quietLogger
+    )
+    await #expect(throws: SupplierFailure.failed("timeout")) {
+      _ = try await connection.exchange(.init(url: URL(string: "https://example.org")!))
+    }
+  }
+
+  /// After the cool-down, one request probes; the others are still refused until it answers.
+  @Test func theHalfOpenBreakerLetsOneProbeThrough() async throws {
+    let breaker = CircuitBreaker(threshold: 1, coolDown: .milliseconds(10))
+    await breaker.failure()
+    try await Task.sleep(for: .milliseconds(30))
+    try await breaker.check()
+    await #expect(throws: SupplierFailure.circuitOpen(retryAfter: 1)) { try await breaker.check() }
+    await breaker.release()
+    try await breaker.check()
+    await breaker.success()
+    try await breaker.check()
+    try await breaker.check()
+  }
+
+  /// A DOCTYPE in UTF-16 is refused too: only UTF-8 is read.
+  @Test func aUTF16AnswerIsRefused() {
+    let text = #"<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE items [<!ENTITY x "y">]><items/>"#
+    let utf16 = text.data(using: .utf16)!
+    #expect(BoardGameGeekSupplier.parse(utf16) == nil)
+    #expect(BoardGameGeekSupplier.parse(Data("<items></items>".utf8))?.isEmpty == true)
+  }
+
+  /// A brand-new token that IGDB refuses means wrong credentials: no second Twitch fetch.
+  @Test func aRefusedFreshTokenIsNotFetchedAgain() async throws {
+    let transport = ReplayTransport([("id.twitch.tv", ok(Fixture.twitchToken)), ("api.igdb.com", status(401))])
+    let igdb = IGDBSupplier(
+      connection: testConnection("igdb", transport),
+      tokens: TwitchTokens(
+        clientID: "id",
+        clientSecret: "TEGOLA-TEST-SENTINEL",
+        connection: testConnection("twitch", transport)
+      )
+    )
+    await #expect(throws: SupplierFailure.unauthorized) {
+      _ = try await igdb.search(.init(title: "x", limit: 5, reason: .title))
+    }
+    #expect(transport.sent.filter { $0.url.host == "id.twitch.tv" }.count == 1)
+  }
+
+  /// MusicBrainz's year and subtype rank and filter here, not in its index.
+  @Test func musicBrainzFiltersTheSubtypeLocally() async throws {
+    let transport = ReplayTransport([("musicbrainz.org", ok(Fixture.musicBrainzSearch))])
+    let supplier = MusicBrainzSupplier(connection: testConnection("musicbrainz", transport), userAgent: "t")
+    let candidates = try await supplier.search(
+      .init(title: "OK Computer", year: 1997, subtype: "cd", limit: 5, reason: .title)
+    )
+    #expect(candidates.count == 2)
+    let lucene = try #require(transport.sent.first.flatMap { query($0, "query") })
+    #expect(lucene == "release:(OK Computer)")
   }
 }

@@ -51,13 +51,18 @@ struct MusicBrainzSupplier: DataSupplier {
     if let catalogueNumber = query.catalogueNumber, !catalogueNumber.isEmpty {
       clauses.append("catno:\"\(Self.escape(catalogueNumber))\"")
     }
-    if let year = query.year, TextMatch.years.contains(year) { clauses.append("date:\(year)") }
-    if let format = query.subtype.flatMap(Self.format(forSubtype:)) { clauses.append("format:\(format)") }
+    // The year ranks and the subtype filters here, not in the index: MusicBrainz's `date` and `format` fields don't
+    // match a bare year or medium reliably, and a filter that misses reads as "no match".
     guard !clauses.isEmpty else { return [] }
     let releases = try await releases(
-      .init(query: clauses.joined(separator: " AND "), fmt: .json, limit: min(25, query.limit * 3))
+      .init(
+        query: clauses.joined(separator: " AND "),
+        fmt: .json,
+        limit: min(25, query.limit * (query.subtype == nil ? 3 : 5))
+      )
     )
     return releases.compactMap { release in
+      if let subtype = query.subtype, Self.subtype(release) != subtype { return nil }
       let year = TextMatch.year(release.date)
       var reasons: [Components.Schemas.Reason] = [.init(kind: query.reason)]
       var confidence: Double
@@ -213,15 +218,6 @@ struct MusicBrainzSupplier: DataSupplier {
       if formats.isSubset(of: ["12\" Vinyl", "Vinyl"]), count == 2 { return "2×LP" }
       return nil
     default: return nil
-    }
-  }
-
-  static func format(forSubtype subtype: String) -> String? {
-    switch subtype {
-    case "vinyl": "Vinyl"
-    case "cd": "CD"
-    case "cassette": "Cassette"
-    default: nil
     }
   }
 

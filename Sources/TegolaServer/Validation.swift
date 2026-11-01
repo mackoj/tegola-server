@@ -61,9 +61,6 @@ enum Validation {
       try length(item.title, max: 300, "title")
       try length(item.subtitle, max: 300, "subtitle")
       try length(item.note, max: 300, "note")
-      // The contract gives no range; years outside SearchRequest's are refused too, so no row can carry one into a
-      // supplier's ranking (an extreme year once overflowed it; tasks/M3-review.md finding 1).
-      if let year = item.year, !(1800...2100).contains(year) { throw Failure(field: "year") }
       try subtype(item.subtype)
       try region(item.region)
     }

@@ -110,8 +110,8 @@ struct IGDBSupplier: DataSupplier {
         case .undocumented(let status, _): throw .failed("http-\(status / 100)xx")
         }
       } catch .unauthorized where !retried {
-        // The token expired early or was revoked: fetch a new one, once.
-        await tokens.invalidate()
+        // The token expired early or was revoked: fetch a new one, once, unless it's brand new.
+        guard await tokens.invalidate() else { throw .unauthorized }
         retried = true
       }
     }
@@ -234,8 +234,12 @@ actor TwitchTokens {
   private let client: TwitchAPI.Client
   private var current: (token: String, expires: ContinuousClock.Instant)?
   private var inFlight: Task<String, any Error>?
+  private var fetchedAt: ContinuousClock.Instant?
+  /// A token younger than this that IGDB refuses isn't replaced: the credentials are wrong.
+  private let minimumAge: Duration
 
-  init(clientID: String, clientSecret: String, connection: SupplierConnection) {
+  init(clientID: String, clientSecret: String, connection: SupplierConnection, minimumAge: Duration = .seconds(60)) {
+    self.minimumAge = minimumAge
     self.clientID = clientID
     self.clientSecret = clientSecret
     self.connection = connection
@@ -256,10 +260,10 @@ actor TwitchTokens {
     }
     do {
       let token = try await task.value
-      inFlight = nil
+      if inFlight == task { inFlight = nil }
       return token
     } catch {
-      inFlight = nil
+      if inFlight == task { inFlight = nil }
       throw error as? SupplierFailure ?? .failed("token")
     }
   }
@@ -277,10 +281,15 @@ actor TwitchTokens {
     // Renew a minute early, and at least every day.
     let lifetime = min(max(answer.expiresIn - 60, 60), 24 * 3600)
     current = (answer.accessToken, .now + .seconds(lifetime))
+    fetchedAt = .now
     return answer.accessToken
   }
 
-  func invalidate() {
+  /// Drops the token after IGDB refused it, unless it's less than a minute old: a fresh token refused means the
+  /// credentials are wrong, and fetching more won't help. Returns whether a retry is worth it.
+  func invalidate() -> Bool {
+    if let fetchedAt, ContinuousClock.now - fetchedAt < minimumAge { return false }
     current = nil
+    return true
   }
 }
