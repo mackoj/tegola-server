@@ -20,10 +20,11 @@ COPY Tests Tests
 RUN swift build -c release --static-swift-stdlib --product tegola-server \
   && cp "$(swift build -c release --show-bin-path)/tegola-server" /tegola-server
 
-# Run: a slim Ubuntu with CA certificates (for the lookup sources, M3) and nothing else, as an unprivileged user.
+# Run: a slim Ubuntu with CA certificates (for the lookup sources, M3) and libxml2 (FoundationXML, which reads
+# BoardGameGeek's answers; D-22), and nothing else, as an unprivileged user.
 FROM ubuntu:noble@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates tzdata \
+  && apt-get install -y --no-install-recommends ca-certificates tzdata libxml2 \
   && rm -rf /var/lib/apt/lists/* \
   && useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin tegola
 COPY --from=build /tegola-server /usr/local/bin/tegola-server

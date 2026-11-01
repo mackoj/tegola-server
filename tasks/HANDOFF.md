@@ -33,9 +33,8 @@ it short and current.
    - plus medium and low items, and tests that prove too little.
    Verify each against the code and fix it with a test, during or right after item 1 (finding 1 first: it's a crash).
    Then run a fresh review on the whole M3 diff before the PR is marked ready.
-3. **M3, the Docker smoke test** was re-running when the session was cleared, with the AsyncHTTPClient dependency in
-   the image. Re-run `scripts/docker-smoke.sh` (start `dockerd` first, see below) and record the result in
-   `docs/milestones/M3.md`, "Verification".
+3. **M3, the Docker smoke test:** green, 26 checks. It needed `libxml2` in the runtime image: FoundationXML, which reads
+   BoardGameGeek's XML, links it. If the restructure drops FoundationXML, drop the package too.
 4. **M3, the PR**: open it (draft) once 1–3 are done and CI is green, then merge.
 5. **Owner, keys**: register the sources' keys (`deploy/env.example`, "Lookup sources"). Then re-record the
    fixtures from the live APIs: they're hand-written from the documented formats, since this sandbox can't reach the

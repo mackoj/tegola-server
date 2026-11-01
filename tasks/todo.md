@@ -44,7 +44,7 @@ Plan: `tasks/plan.md`, M3. Report: `docs/milestones/M3.md`. Sources chosen by th
 - [x] T3.7 Docs and report
 - [ ] T3.8 Each source described by an OpenAPI file (the supplier's, or ours) with a generated client; one protocol for
   any data supplier (owner, 2026-11-01; HANDOFF item 1)
-- [ ] Docker smoke test with the new dependency, recorded in the report
+- [x] Docker smoke test with the new dependency, recorded in the report (needed `libxml2` in the image)
 - [ ] Separate review agent over M3
 - [ ] Owner: register the keys (D-22); then re-record the fixtures from the live APIs
 
