@@ -6,7 +6,7 @@ import TwitchAPI
 /// Video games from IGDB (D-22), through the clients generated from `api/sources/igdb.openapi.yaml` and
 /// `twitch.openapi.yaml` (D-23). Words only: IGDB has no barcode index. It needs a Twitch application's client id and
 /// secret, exchanged for an app access token; requests carry both. IGDB allows four requests a second and requires
-/// attribution. A candidate is one release date of a game: one platform in one region.
+/// attribution. A record is one release date of a game: one platform in one region.
 /// Works are `igdb:game:<id>`, releases `igdb:game:<id>:<platform id>:<region or any>`.
 struct IGDBProvider: DataProvider {
   typealias Game = IGDBAPI.Components.Schemas.Game
@@ -45,33 +45,23 @@ struct IGDBProvider: DataProvider {
     )
   }
 
-  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate] { [] }
+  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [ProviderRecord] { [] }
 
-  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate] {
+  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [ProviderRecord] {
     guard !query.title.isEmpty else { return [] }
     let games = try await games(
       "search \"\(Self.escape(query.title))\"; fields \(Self.fields); limit \(min(20, query.limit * 2));"
     )
     let platform = VideoGamePlatforms.platform(subtype: query.subtype)
-    var candidates: [Components.Schemas.Candidate] = []
+    var records: [ProviderRecord] = []
     for game in games {
       for release in Self.releases(game) {
         if let platform, release.subtype != platform.subtype { continue }
         guard VideoGamePlatforms.fits(region: release.region, asked: query.region) else { continue }
-        let confidence = TextMatch.confidence(
-          title: query.title,
-          candidateTitle: game.name ?? "",
-          subtitle: query.subtitle,
-          candidateSubtitle: release.platformName,
-          year: query.year,
-          candidateYear: release.year
-        )
-        if let candidate = candidate(game, release, confidence: confidence, reason: query.reason) {
-          candidates.append(candidate)
-        }
+        if let record = record(game, release) { records.append(record) }
       }
     }
-    return candidates
+    return records
   }
 
   func work(id: String) async throws(ProviderFailure) -> Components.Schemas.Work? {
@@ -166,12 +156,8 @@ struct IGDBProvider: DataProvider {
     return Array(releases.prefix(12))
   }
 
-  private func candidate(
-    _ game: Game,
-    _ release: Release,
-    confidence: Double,
-    reason: Components.Schemas.Reason.KindPayload
-  ) -> Components.Schemas.Candidate? {
+  /// One release of a game. Its subtitle is the platform, which a query's subtitle is compared with.
+  private func record(_ game: Game, _ release: Release) -> ProviderRecord? {
     guard let title = TextMatch.clean(game.name) else { return nil }
     var fields: [String: Components.Schemas.FieldValue] = [:]
     if let platform = release.platformName { fields["platform"] = .case1(platform) }
@@ -179,13 +165,12 @@ struct IGDBProvider: DataProvider {
       fields["publisher"] = .case1(publisher)
     }
     if let region = release.region { fields["region"] = .case1(region) }
-    var reasons: [Components.Schemas.Reason] = [.init(kind: reason)]
-    if release.subtype != nil { reasons.append(.init(kind: .subtype)) }
     let cover = game.cover?.imageId.flatMap { id -> String? in
       guard id.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }), id.count <= 64 else { return nil }
       return allowedImageURL("https://images.igdb.com/igdb/image/upload/t_cover_big/\(id).jpg", hosts: Self.imageHosts)
     }
-    return .init(
+    return ProviderRecord(
+      provider: name,
       releaseID: Self.releaseID(game, release),
       workID: "igdb:game:\(game.id)",
       typeID: typeID,
@@ -194,12 +179,11 @@ struct IGDBProvider: DataProvider {
       subtitle: release.platformName,
       year: release.year,
       region: release.region,
-      fields: fields.isEmpty ? nil : .init(additionalProperties: fields),
-      images: cover.map { [.init(role: .front, url: $0)] },
-      confidence: confidence,
-      reasons: reasons,
-      sources: [Self.source],
-      externalIDs: .init(additionalProperties: ["igdb": String(game.id)])
+      fields: fields,
+      images: cover.map { [.init(role: .front, url: $0)] } ?? [],
+      externalIDs: ["igdb": String(game.id)],
+      matched: release.subtype == nil ? [] : [.subtype],
+      source: Self.source
     )
   }
 

@@ -15,6 +15,35 @@ func field(_ candidate: Components.Schemas.Candidate, _ key: String) -> Componen
   candidate.fields?.additionalProperties[key]
 }
 
+extension DataProvider {
+  /// What the router makes of this provider's records for words, one candidate each, in the provider's order.
+  func candidates(_ query: SearchQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate] {
+    try await search(query).map { RecordMerge.candidate([Ranking.words($0, query: query, weights: weights)]) }
+  }
+
+  /// What the router makes of this provider's records for a barcode, one candidate each, in the provider's order.
+  func candidates(_ query: BarcodeQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate] {
+    try await barcode(query).map { RecordMerge.candidate([Ranking.barcode($0, weights: weights)]) }
+  }
+}
+
+/// A record from a scripted provider: its id is `<provider>:<n>`, its title the id unless given.
+func record(
+  _ id: String,
+  title: String? = nil,
+  typeID: String = "music",
+  externalIDs: [String: String] = [:]
+) -> ProviderRecord {
+  ProviderRecord(
+    provider: String(id.prefix { $0 != ":" }),
+    releaseID: id,
+    typeID: typeID,
+    title: title ?? id,
+    externalIDs: externalIDs,
+    source: .init(name: String(id.prefix { $0 != ":" }))
+  )
+}
+
 func query(_ request: OutboundRequest, _ name: String) -> String? {
   URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == name }?.value
 }
@@ -29,7 +58,7 @@ func query(_ request: OutboundRequest, _ name: String) -> String? {
 
   @Test func aBarcodeKeepsOnlyExactHitsAndFillsTheTypeFields() async throws {
     let transport = ReplayTransport([("musicbrainz.org/ws/2/release", ok(Fixture.musicBrainzBarcode))])
-    let candidates = try await source(transport).barcode(
+    let candidates = try await source(transport).candidates(
       .init(typeID: "music", code: "724385522925", symbology: .ean13)
     )
     #expect(candidates.count == 1)
@@ -59,13 +88,13 @@ func query(_ request: OutboundRequest, _ name: String) -> String? {
 
   @Test func aSubtypeFiltersBarcodeHits() async throws {
     let transport = ReplayTransport([("musicbrainz.org", ok(Fixture.musicBrainzBarcode))])
-    let candidates = try await source(transport).barcode(.init(typeID: "music", code: "724385522925", subtype: "cd"))
+    let candidates = try await source(transport).candidates(.init(typeID: "music", code: "724385522925", subtype: "cd"))
     #expect(candidates.isEmpty)
   }
 
   @Test func searchRanksByTitleArtistAndYear() async throws {
     let transport = ReplayTransport([("musicbrainz.org", ok(Fixture.musicBrainzSearch))])
-    let candidates = try await source(transport).search(
+    let candidates = try await source(transport).candidates(
       .init(title: "ok computer", subtitle: "Radiohead", year: 1997, limit: 5, reason: .title)
     )
     #expect(candidates.count == 2)
@@ -123,7 +152,7 @@ func query(_ request: OutboundRequest, _ name: String) -> String? {
     let transport = ReplayTransport([
       ("id.twitch.tv", ok(Fixture.twitchToken)), ("api.igdb.com/v4/games", ok(Fixture.igdbGames)),
     ])
-    let candidates = try await source(transport).search(
+    let candidates = try await source(transport).candidates(
       .init(title: "Ocarina of Time", subtitle: "Nintendo 64", limit: 5, reason: .title)
     )
     #expect(candidates.map(\.region) == ["NTSC-J", "NTSC-U", "PAL"])
@@ -143,7 +172,7 @@ func query(_ request: OutboundRequest, _ name: String) -> String? {
     let transport = ReplayTransport([
       ("id.twitch.tv", ok(Fixture.twitchToken)), ("api.igdb.com", ok(Fixture.igdbGames)),
     ])
-    let candidates = try await source(transport).search(
+    let candidates = try await source(transport).candidates(
       .init(title: "Ocarina of Time", subtype: "n64", region: "NTSC-U", limit: 5, reason: .title)
     )
     #expect(candidates.map(\.releaseID) == ["igdb:game:1026:4:NTSC-U"])
@@ -190,7 +219,7 @@ func query(_ request: OutboundRequest, _ name: String) -> String? {
         minimumAge: .zero
       )
     )
-    let candidates = try await igdb.search(.init(title: "Ocarina of Time", limit: 5, reason: .title))
+    let candidates = try await igdb.candidates(.init(title: "Ocarina of Time", limit: 5, reason: .title))
     #expect(!candidates.isEmpty)
     #expect(transport.sent.filter { $0.url.host == "id.twitch.tv" }.count == 2)
   }
@@ -199,7 +228,7 @@ func query(_ request: OutboundRequest, _ name: String) -> String? {
   @Test func aCoverIDThatIsntAnIDIsDropped() async throws {
     let games = Fixture.igdbGames.replacingOccurrences(of: "co3nnx", with: "../../evil?x=1")
     let transport = ReplayTransport([("id.twitch.tv", ok(Fixture.twitchToken)), ("api.igdb.com", ok(games))])
-    let candidates = try await source(transport).search(.init(title: "Ocarina of Time", limit: 5, reason: .title))
+    let candidates = try await source(transport).candidates(.init(title: "Ocarina of Time", limit: 5, reason: .title))
     #expect(!candidates.isEmpty)
     #expect(candidates.allSatisfy { $0.images == nil })
   }
@@ -227,7 +256,9 @@ func query(_ request: OutboundRequest, _ name: String) -> String? {
 
   @Test func searchMakesOneCandidatePerRegionWithoutImages() async throws {
     let transport = ReplayTransport([("api.screenscraper.fr/api2/jeuRecherche.php", ok(Fixture.screenScraperSearch))])
-    let candidates = try await source(transport).search(.init(title: "Sonic the Hedgehog", limit: 5, reason: .title))
+    let candidates = try await source(transport).candidates(
+      .init(title: "Sonic the Hedgehog", limit: 5, reason: .title)
+    )
     #expect(candidates.map(\.region) == ["NTSC-U", "NTSC-J", "PAL"])
     #expect(candidates.map(\.title) == ["Sonic The Hedgehog", "Sonic The Hedgehog (JP)", "Sonic The Hedgehog"])
     #expect(candidates[0].releaseID == "screenscraper:game:3:NTSC-U")
@@ -245,7 +276,9 @@ func query(_ request: OutboundRequest, _ name: String) -> String? {
 
   @Test func aSubtypeAsksForItsSystem() async throws {
     let transport = ReplayTransport([("api.screenscraper.fr", ok(Fixture.screenScraperEmpty))])
-    let candidates = try await source(transport).search(.init(title: "Mario", subtype: "n64", limit: 5, reason: .title))
+    let candidates = try await source(transport).candidates(
+      .init(title: "Mario", subtype: "n64", limit: 5, reason: .title)
+    )
     #expect(candidates.isEmpty)
     #expect(transport.sent.first.flatMap { query($0, "systemeid") } == "14")
   }
@@ -267,7 +300,7 @@ func query(_ request: OutboundRequest, _ name: String) -> String? {
     let transport = ReplayTransport([
       ("xmlapi2/search", xml(Fixture.bggSearch)), ("xmlapi2/thing", xml(Fixture.bggThing)),
     ])
-    let candidates = try await source(transport).search(
+    let candidates = try await source(transport).candidates(
       .init(title: "Agricola", subtitle: "Z-Man Games", year: 2007, limit: 5, reason: .title)
     )
     #expect(candidates.count == 1)  // the expansion in the answer is not a board game
@@ -306,8 +339,9 @@ final class ScriptedProvider: DataProvider, @unchecked Sendable {
   let idPrefix: String
   let answersBarcodes = true
   let tier: ProviderTier
+  var weights = ProviderWeights()
   var failure: ProviderFailure?
-  var answer: [Components.Schemas.Candidate]
+  var answer: [ProviderRecord]
   private let lock = NSLock()
   private var count = 0
 
@@ -315,7 +349,7 @@ final class ScriptedProvider: DataProvider, @unchecked Sendable {
     _ name: String,
     typeID: String = "music",
     tier: ProviderTier = .primary,
-    answer: [Components.Schemas.Candidate] = [],
+    answer: [ProviderRecord] = [],
     failure: ProviderFailure? = nil
   ) {
     self.name = name
@@ -328,14 +362,14 @@ final class ScriptedProvider: DataProvider, @unchecked Sendable {
 
   var calls: Int { lock.withLock { count } }
 
-  func respond() throws(ProviderFailure) -> [Components.Schemas.Candidate] {
+  func respond() throws(ProviderFailure) -> [ProviderRecord] {
     lock.withLock { count += 1 }
     if let failure { throw failure }
     return answer
   }
 
-  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate] { try respond() }
-  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate] { try respond() }
+  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [ProviderRecord] { try respond() }
+  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [ProviderRecord] { try respond() }
   func work(id: String) async throws(ProviderFailure) -> Components.Schemas.Work? {
     _ = try respond()
     return .init(workID: id, title: "w", releases: [])
@@ -346,7 +380,7 @@ final class ScriptedProvider: DataProvider, @unchecked Sendable {
   let barcodeQuery = BarcodeQuery(typeID: "music", code: "724385522925")
 
   @Test func aFailingSourceDoesntHideTheOthers() async throws {
-    let good = ScriptedProvider("a", answer: [candidate("a:1", confidence: 0.9)])
+    let good = ScriptedProvider("a", answer: [record("a:1")])
     let bad = ScriptedProvider("b", failure: .failed("network"))
     let service = LookupRouter(sources: [good, bad])
     let candidates = try await service.barcode(barcodeQuery)
@@ -367,7 +401,7 @@ final class ScriptedProvider: DataProvider, @unchecked Sendable {
   }
 
   @Test func answersAreCachedAndFailuresAreNot() async throws {
-    let source = ScriptedProvider("a", answer: [candidate("a:1", confidence: 0.9)])
+    let source = ScriptedProvider("a", answer: [record("a:1")])
     let service = LookupRouter(sources: [source])
     _ = try await service.barcode(barcodeQuery)
     _ = try await service.barcode(barcodeQuery)
@@ -414,8 +448,8 @@ final class RecordingProvider: DataProvider, @unchecked Sendable {
   private var asked: [SearchQuery] = []
   var queries: [SearchQuery] { lock.withLock { asked } }
 
-  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate] { [] }
-  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate] {
+  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [ProviderRecord] { [] }
+  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [ProviderRecord] {
     lock.withLock { asked.append(query) }
     return []
   }
@@ -684,11 +718,17 @@ final class RecordingProvider: DataProvider, @unchecked Sendable {
 
   /// Finding 6: each provider's answer is cut to its best 10 before it's cached.
   @Test func eachProvidersAnswerIsCutToItsBestTen() async throws {
-    let many = (0..<30).map { candidate("a:\($0)", confidence: Double($0) / 100) }
-    let service = LookupRouter(sources: [ScriptedProvider("a", answer: many)])
-    let answer = try await service.barcode(.init(typeID: "music", code: "724385522925"))
+    // Each record's title is a longer start of the words asked, so the later the record, the closer it is.
+    let words = "abcdefghijklmnopqrstuvwxyz0123"
+    let many = (0..<30).map { record("a:\($0)", title: String(words.prefix($0 + 1))) }
+    let provider = ScriptedProvider("a", answer: many)
+    let service = LookupRouter(sources: [provider])
+    let answer = try await service.match(typeID: "music", .init(ref: "r", title: words))
     #expect(answer.count == 10)
     #expect(answer.first?.releaseID == "a:29")
+    #expect(Set(answer.map(\.releaseID)) == Set((20..<30).map { "a:\($0)" }))
+    _ = try await service.match(typeID: "music", .init(ref: "r", title: words))
+    #expect(provider.calls == 1)  // the ten were cached
   }
 
   /// Finding 8: simultaneous first requests share one token fetch.
@@ -852,7 +892,7 @@ struct StubTransport: HTTPTransport {
   @Test func musicBrainzFiltersTheSubtypeLocally() async throws {
     let transport = ReplayTransport([("musicbrainz.org", ok(Fixture.musicBrainzSearch))])
     let provider = MusicBrainzProvider(connection: testConnection("musicbrainz", transport), userAgent: "t")
-    let candidates = try await provider.search(
+    let candidates = try await provider.candidates(
       .init(title: "OK Computer", year: 1997, subtype: "cd", limit: 5, reason: .title)
     )
     #expect(candidates.count == 2)

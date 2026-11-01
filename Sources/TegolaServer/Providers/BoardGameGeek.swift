@@ -38,9 +38,9 @@ struct BoardGameGeekProvider: DataProvider {
     )
   }
 
-  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate] { [] }
+  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [ProviderRecord] { [] }
 
-  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate] {
+  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [ProviderRecord] {
     guard !query.title.isEmpty else { return [] }
     let output = try await connection.call {
       try await client.search(query: .init(query: String(query.title.prefix(200)), _type: .boardgame))
@@ -56,20 +56,7 @@ struct BoardGameGeekProvider: DataProvider {
     }
     .prefix(min(10, query.limit * 2))
     guard !best.isEmpty else { return [] }
-    let games = try await things(best.map(\.id))
-    return games.compactMap { game in
-      let confidence = TextMatch.confidence(
-        title: query.title,
-        candidateTitle: game.name ?? "",
-        subtitle: query.subtitle,
-        candidateSubtitle: query.subtitle.flatMap { asked in
-          game.publishers.max { TextMatch.similarity(asked, $0) < TextMatch.similarity(asked, $1) }
-        },
-        year: query.year,
-        candidateYear: game.year
-      )
-      return candidate(game, confidence: confidence, reason: query.reason)
-    }
+    return try await things(best.map(\.id)).compactMap(record)
   }
 
   func work(id: String) async throws(ProviderFailure) -> Components.Schemas.Work? {
@@ -140,11 +127,8 @@ struct BoardGameGeekProvider: DataProvider {
 
   // MARK: - mapping
 
-  private func candidate(
-    _ game: Item,
-    confidence: Double,
-    reason: Components.Schemas.Reason.KindPayload
-  ) -> Components.Schemas.Candidate? {
+  /// One game. Its subtitle is the first publisher; a query's subtitle is compared with each of them.
+  private func record(_ game: Item) -> ProviderRecord? {
     guard let title = TextMatch.clean(game.name) else { return nil }
     var fields: [String: Components.Schemas.FieldValue] = [:]
     let designers = game.designers.compactMap { TextMatch.clean($0) }.prefix(3)
@@ -160,19 +144,20 @@ struct BoardGameGeekProvider: DataProvider {
     if let url = allowedImageURL(game.thumbnail, hosts: Self.imageHosts) {
       images.append(.init(role: .thumbnail, url: url))
     }
-    return .init(
+    let publishers = game.publishers.prefix(30).compactMap { TextMatch.clean($0) }
+    return ProviderRecord(
+      provider: name,
       releaseID: "boardgamegeek:\(game.id)",
       workID: "boardgamegeek:\(game.id)",
       typeID: typeID,
       title: title,
-      subtitle: TextMatch.clean(game.publishers.first),
+      subtitle: publishers.first,
+      otherSubtitles: Array(publishers.dropFirst()),
       year: game.year,
-      fields: fields.isEmpty ? nil : .init(additionalProperties: fields),
-      images: images.isEmpty ? nil : images,
-      confidence: confidence,
-      reasons: [.init(kind: reason)],
-      sources: [Self.source],
-      externalIDs: .init(additionalProperties: ["boardgamegeek": String(game.id)])
+      fields: fields,
+      images: images,
+      externalIDs: ["boardgamegeek": String(game.id)],
+      source: Self.source
     )
   }
 

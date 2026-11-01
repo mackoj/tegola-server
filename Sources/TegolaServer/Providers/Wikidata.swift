@@ -8,7 +8,7 @@ import WikidataAPI
 ///
 /// One provider per type, each with its profile: which classes (P31) count as that type, which statement names the
 /// subtitle, and its tier. All of them share one connection, so Wikidata sees one paced client. Items are
-/// `wikidata:<Q-id>`; an item is a work more often than an edition, so a candidate has no subtype and no work id, and
+/// `wikidata:<Q-id>`; an item is a work more often than an edition, so a record has no subtype and no work id, and
 /// its confidence is weighted down.
 struct WikidataProvider: DataProvider {
   typealias Entity = WikidataAPI.Components.Schemas.Entity
@@ -24,6 +24,9 @@ struct WikidataProvider: DataProvider {
   let answersBarcodes = true
   var typeID: String { profile.typeID }
   var tier: ProviderTier { profile.tier }
+  /// An exact GTIN is 0.9, below an edition-level source's 0.95: an item is a work more often than an edition. Words
+  /// are weighted per type (D-26).
+  var weights: ProviderWeights { ProviderWeights(barcode: 0.9, words: profile.weight) }
 
   /// Labels are asked in English, with Wikidata's fallback to another language; the contract's requests carry no
   /// language yet.
@@ -45,7 +48,7 @@ struct WikidataProvider: DataProvider {
     )
   }
 
-  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate] {
+  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [ProviderRecord] {
     let codes = Self.gtinVariants(query.code)
     guard !codes.isEmpty else { return [] }
     let answer = try await api(
@@ -59,15 +62,13 @@ struct WikidataProvider: DataProvider {
       )
     )
     let ids = (answer.query?.search ?? []).compactMap { Self.itemID($0.title) }
-    return try await candidates(ids) { entity in
+    return try await records(ids) { entity in
       // The index matches loosely; only an exact GTIN counts as a barcode match.
-      let gtins = Self.strings(entity.claims?.p3962)
-      guard gtins.contains(where: codes.contains) else { return nil }
-      return (0.9, [.init(kind: .barcode)])
+      Self.strings(entity.claims?.p3962).contains(where: codes.contains)
     }
   }
 
-  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate] {
+  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [ProviderRecord] {
     // Wikidata's search reads labels and aliases: a catalogue number alone finds nothing worth asking for.
     guard let words = TextMatch.clean(query.title, max: 250) else { return [] }
     let answer = try await api(
@@ -82,17 +83,7 @@ struct WikidataProvider: DataProvider {
       )
     )
     let ids = (answer.search ?? []).compactMap { Self.itemID($0.id) }
-    return try await candidates(ids) { entity, title, subtitle, year in
-      let score = TextMatch.confidence(
-        title: query.title,
-        candidateTitle: title,
-        subtitle: query.subtitle,
-        candidateSubtitle: subtitle,
-        year: query.year,
-        candidateYear: year
-      )
-      return (score * profile.weight, [.init(kind: query.reason)])
-    }
+    return try await records(ids) { _ in true }
   }
 
   /// Wikidata items aren't grouped into works with editions here.
@@ -129,25 +120,18 @@ struct WikidataProvider: DataProvider {
     return (answer.entities?.additionalProperties ?? [:]).filter { $0.value.missing == nil }
   }
 
-  /// The items, in the order asked, kept when their class is the profile's; the subtitle's labels in one more
-  /// request. `rank` gives a kept item its confidence and reasons, or drops it.
-  private func candidates(
+  /// The items, in the order asked, kept when their class is the profile's and `keep` agrees; the subtitle's labels
+  /// in one more request.
+  private func records(
     _ ids: [String],
-    rank: (Entity) -> (Double, [Components.Schemas.Reason])?
-  ) async throws(ProviderFailure) -> [Components.Schemas.Candidate] {
-    try await candidates(ids) { entity, _, _, _ in rank(entity) }
-  }
-
-  private func candidates(
-    _ ids: [String],
-    rank: (Entity, String, String?, Int?) -> (Double, [Components.Schemas.Reason])?
-  ) async throws(ProviderFailure) -> [Components.Schemas.Candidate] {
+    keep: (Entity) -> Bool
+  ) async throws(ProviderFailure) -> [ProviderRecord] {
     var unique: [String] = []
     for id in ids where !unique.contains(id) { unique.append(id) }
     let ordered = Array(unique.prefix(20))
     let found = try await entities(ordered, props: "labels|descriptions|claims")
     let kept: [(id: String, entity: Entity, title: String)] = ordered.compactMap { id in
-      guard let entity = found[id], profile.accepts(Self.items(entity.claims?.p31)),
+      guard let entity = found[id], profile.accepts(Self.items(entity.claims?.p31)), keep(entity),
         let title = TextMatch.clean(Self.text(entity.labels?.additionalProperties))
       else { return nil }
       return (id, entity, title)
@@ -158,22 +142,20 @@ struct WikidataProvider: DataProvider {
       let named = try await entities(Array(Set(subtitleIDs)).sorted(), props: "labels")
       subtitleLabels = named.compactMapValues { TextMatch.clean(Self.text($0.labels?.additionalProperties)) }
     }
-    return kept.compactMap { item in
-      let subtitle = profile.subtitleItem(in: item.entity.claims).flatMap { subtitleLabels[$0] }
-      let year = Self.year(item.entity.claims)
-      guard let (confidence, reasons) = rank(item.entity, item.title, subtitle, year) else { return nil }
-      return .init(
+    return kept.map { item in
+      ProviderRecord(
+        provider: name,
         releaseID: "wikidata:\(item.id)",
         typeID: typeID,
         title: item.title,
-        subtitle: subtitle,
-        year: year,
-        confidence: min(1, max(0, confidence)),
-        reasons: reasons,
-        sources: [
-          .named("Wikidata", url: "https://www.wikidata.org/wiki/\(item.id)", attribution: Self.source.attribution)
-        ],
-        externalIDs: .init(additionalProperties: ["wikidata": item.id])
+        subtitle: profile.subtitleItem(in: item.entity.claims).flatMap { subtitleLabels[$0] },
+        year: Self.year(item.entity.claims),
+        externalIDs: ["wikidata": item.id],
+        source: .named(
+          "Wikidata",
+          url: "https://www.wikidata.org/wiki/\(item.id)",
+          attribution: Self.source.attribution
+        )
       )
     }
   }

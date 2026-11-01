@@ -1,10 +1,11 @@
 import Foundation
 import Logging
 
-/// Any data provider, abstractly (D-23): one database that answers for one type (PLAN §4). Everything specific to a
-/// provider (its OpenAPI-generated client, its key, its query language, its answer's shape) stays behind this
-/// protocol; the lookup service only sees candidates, works and `ProviderFailure`s. Ids a provider returns carry
-/// its prefix (`musicbrainz:`, `igdb:`, …), so `work(id:)` can find the provider that owns a work.
+/// Any data provider, abstractly (D-23, D-27): one database that answers for one type (PLAN §4). Everything specific
+/// to a provider (its OpenAPI-generated client, its key, its query language, its answer's shape) stays behind this
+/// protocol. A provider returns `ProviderRecord`s, evidence the router scores and merges; it never ranks or decides.
+/// Ids a provider returns carry its prefix (`musicbrainz:`, `igdb:`, …), so `work(id:)` can find the provider that
+/// owns a work.
 protocol DataProvider: Sendable {
   /// The `name` in `Candidate.sources`, and the prefix of its ids, lower-cased.
   var name: String { get }
@@ -15,14 +16,19 @@ protocol DataProvider: Sendable {
   var answersBarcodes: Bool { get }
   /// When it's asked: with the type's other primary providers, or only when they found nothing (D-26).
   var tier: ProviderTier { get }
+  /// How much the router trusts its matches (D-27).
+  var weights: ProviderWeights { get }
 
-  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate]
-  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [Components.Schemas.Candidate]
+  /// Exact barcode matches only: the router scores every record it returns as one.
+  func barcode(_ query: BarcodeQuery) async throws(ProviderFailure) -> [ProviderRecord]
+  /// What the source finds for the words, unranked: the router compares the words itself.
+  func search(_ query: SearchQuery) async throws(ProviderFailure) -> [ProviderRecord]
   func work(id: String) async throws(ProviderFailure) -> Components.Schemas.Work?
 }
 
 extension DataProvider {
   var tier: ProviderTier { .primary }
+  var weights: ProviderWeights { ProviderWeights() }
 }
 
 /// The order a type's providers are asked in (D-26). Every provider of one tier is asked at once; the next tier only
@@ -64,17 +70,19 @@ func cacheKeyString(_ parts: [String?]) -> String {
   return String(decoding: data, as: UTF8.self)
 }
 
-/// The providers the configuration turned on, grouped by type (D-22), asked tier by tier (D-26). Every provider of a
-/// tier is asked at once; the answers are merged and ranked. When some fail and others answer with candidates, those
-/// are enough. When a tier finds nothing (its providers failed, or found no match), the next tier is asked. When no
-/// tier finds anything and any provider failed, the lookup is `SourceUnavailable` (503) with the shortest
-/// `Retry-After` among the failures, and the app retries: a failure never reads as "no match". Each provider's answer
-/// is cut to its best 10 and cached; failures never are.
+/// The providers the configuration turned on, grouped by type (D-22), asked tier by tier (D-26), their records scored
+/// and merged here (D-27). Every provider of a tier is asked at once. Each one's records are scored the same way
+/// (`Ranking`), cut to its best 10 and cached; failures never are. The tier's records then become candidates
+/// (`RecordMerge`): a release two providers both found is one candidate. When some fail and others find something,
+/// that is enough. When a tier finds nothing (its providers failed, or found no match), the next tier is asked. When
+/// no tier finds anything and any provider failed, the lookup is `SourceUnavailable` (503) with the shortest
+/// `Retry-After` among the failures, and the app retries: a failure never reads as "no match".
 package struct LookupRouter: LookupService {
   package typealias Candidate = Components.Schemas.Candidate
 
+  /// Each type's providers, in the configured order, which is also their rank when records merge.
   let sources: [String: [any DataProvider]]
-  let cache: AnswerCache<[Candidate]>
+  let cache: AnswerCache<[ProviderRecord]>
   let works: AnswerCache<Components.Schemas.Work>
   let lifetimes: Lifetimes
 
@@ -85,7 +93,7 @@ package struct LookupRouter: LookupService {
 
   /// What one tier found, and the `Retry-After` of each provider that failed.
   struct TierAnswer: Sendable {
-    var candidates: [Candidate] = []
+    var found: [ScoredRecord] = []
     var failures: [Int] = []
   }
 
@@ -141,27 +149,9 @@ package struct LookupRouter: LookupService {
       async let byWords = words()
       async let byBarcode = code()
       let (codes, text) = await (byBarcode, byWords)
-      return TierAnswer(
-        candidates: Self.merge(codes.candidates, text.candidates),
-        failures: codes.failures + text.failures
-      )
+      // Barcode records first, so a release found both ways lists `barcode` before the words' reason.
+      return TierAnswer(found: codes.found + text.found, failures: codes.failures + text.failures)
     }
-  }
-
-  /// Adds `more` to `base`; a release already there keeps one entry, with the higher confidence and every reason.
-  static func merge(_ base: [Candidate], _ more: [Candidate]) -> [Candidate] {
-    var merged = base
-    for candidate in more {
-      guard let index = merged.firstIndex(where: { $0.releaseID == candidate.releaseID }) else {
-        merged.append(candidate)
-        continue
-      }
-      merged[index].confidence = max(merged[index].confidence, candidate.confidence)
-      for reason in candidate.reasons where !merged[index].reasons.contains(where: { $0.kind == reason.kind }) {
-        merged[index].reasons.append(reason)
-      }
-    }
-    return merged
   }
 
   package func match(typeID: String, _ item: Components.Schemas.MatchItem) async throws -> [Candidate] {
@@ -193,8 +183,8 @@ package struct LookupRouter: LookupService {
 
   // MARK: - tiers
 
-  /// Asks the type's tiers in order and returns the first answer with candidates. With none, any failure on the way
-  /// is `SourceUnavailable`: a fallback's "no match" can't stand for a primary that couldn't answer.
+  /// Asks the type's tiers in order and returns the first one's candidates, if it found any. With none, any failure
+  /// on the way is `SourceUnavailable`: a fallback's "no match" can't stand for a primary that couldn't answer.
   private func tiered(_ typeID: String, _ body: ([any DataProvider]) async -> TierAnswer) async throws -> [Candidate] {
     let all = sources[typeID] ?? []
     var failures: [Int] = []
@@ -202,7 +192,7 @@ package struct LookupRouter: LookupService {
       let asked = all.filter { $0.tier == tier }
       guard !asked.isEmpty else { continue }
       let answer = await body(asked)
-      if !answer.candidates.isEmpty { return answer.candidates }
+      if !answer.found.isEmpty { return RecordMerge.candidates(answer.found, order: all.map(\.name)) }
       failures += answer.failures
     }
     if let soonest = failures.min() { throw SourceUnavailable(retryAfter: soonest) }
@@ -212,49 +202,61 @@ package struct LookupRouter: LookupService {
   private func askWords(_ tier: [any DataProvider], _ query: SearchQuery) async -> TierAnswer {
     await ask(tier, operation: "search", key: query.cacheKey) { source throws(ProviderFailure) in
       try await source.search(query)
+    } score: { record, source in
+      Ranking.words(record, query: query, weights: source.weights)
     }
   }
 
   private func askBarcode(_ tier: [any DataProvider], _ query: BarcodeQuery) async -> TierAnswer {
     let key = cacheKeyString([query.code, query.symbology?.rawValue, query.subtype, query.region])
     return await ask(tier.filter(\.answersBarcodes), operation: "barcode", key: key) {
-      source throws(ProviderFailure) in try await source.barcode(query)
+      source throws(ProviderFailure) in
+      try await source.barcode(query)
+    } score: { record, source in
+      Ranking.barcode(record, weights: source.weights)
     }
   }
 
-  /// Asks every source in parallel, each through the cache, and collects what comes back.
+  /// Asks every provider in parallel, each through the cache, and scores what comes back. Each provider's records
+  /// are cut to its best 10 before they're cached: what the contract can return, and a bound on what the cache holds.
   private func ask(
     _ asked: [any DataProvider],
     operation: String,
     key: String,
-    _ body: @escaping @Sendable (any DataProvider) async throws(ProviderFailure) -> [Candidate]
+    _ body: @escaping @Sendable (any DataProvider) async throws(ProviderFailure) -> [ProviderRecord],
+    score: @escaping @Sendable (ProviderRecord, any DataProvider) -> ScoredRecord
   ) async -> TierAnswer {
     guard !asked.isEmpty else { return TierAnswer() }
     let cache = self.cache
     let lifetimes = self.lifetimes
-    let outcomes = await withTaskGroup(of: Result<[Candidate], ProviderFailure>.self) { group in
-      for source in asked {
+    let outcomes = await withTaskGroup(of: (Int, Result<[ScoredRecord], ProviderFailure>).self) { group in
+      for (index, source) in asked.enumerated() {
         group.addTask {
           let cacheKey = "\(source.name)|\(source.typeID)|\(operation)|\(key)"
-          if let cached = await cache.value(cacheKey) { return .success(cached) }
+          if let cached = await cache.value(cacheKey) { return (index, .success(cached.map { score($0, source) })) }
           do throws(ProviderFailure) {
-            // Best 10 per provider: what the contract can return, and a bound on what the cache holds.
-            let answer = Array(try await body(source).sorted { $0.confidence > $1.confidence }.prefix(10))
-            await cache.store(answer, for: cacheKey, lifetime: answer.isEmpty ? lifetimes.empty : lifetimes.answer)
-            return .success(answer)
+            let scored = try await body(source)
+              .filter { $0.provider == source.name && $0.typeID == source.typeID }
+              .map { score($0, source) }
+              .sorted { $0.confidence > $1.confidence }
+              .prefix(10)
+            let records = scored.map(\.record)
+            await cache.store(records, for: cacheKey, lifetime: records.isEmpty ? lifetimes.empty : lifetimes.answer)
+            return (index, .success(Array(scored)))
           } catch {
-            return .failure(error)
+            return (index, .failure(error))
           }
         }
       }
-      var outcomes: [Result<[Candidate], ProviderFailure>] = []
+      var outcomes: [(Int, Result<[ScoredRecord], ProviderFailure>)] = []
       for await outcome in group { outcomes.append(outcome) }
-      return outcomes
+      // In the configured order, whoever answered first, so a merge is the same every time.
+      return outcomes.sorted { $0.0 < $1.0 }.map(\.1)
     }
     var answer = TierAnswer()
     for outcome in outcomes {
       switch outcome {
-      case .success(let candidates): answer.candidates += candidates
+      case .success(let found): answer.found += found
       case .failure(let failure): answer.failures.append(failure.retryAfter)
       }
     }
