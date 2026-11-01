@@ -1,13 +1,19 @@
 import Foundation
+import IGDBAPI
+import OpenAPIRuntime
+import TwitchAPI
 
-/// Video games from IGDB (D-22), words only: IGDB has no barcode index. It needs a Twitch application's client id and
+/// Video games from IGDB (D-22), through the clients generated from `api/sources/igdb.openapi.yaml` and
+/// `twitch.openapi.yaml` (D-23). Words only: IGDB has no barcode index. It needs a Twitch application's client id and
 /// secret, exchanged for an app access token; requests carry both. IGDB allows four requests a second and requires
 /// attribution. A candidate is one release date of a game: one platform in one region.
 /// Works are `igdb:game:<id>`, releases `igdb:game:<id>:<platform id>:<region or any>`.
-struct IGDBSource: CatalogueSource {
-  let connection: SourceConnection
+struct IGDBSupplier: DataSupplier {
+  typealias Game = IGDBAPI.Components.Schemas.Game
+
+  let connection: SupplierConnection
   let tokens: TwitchTokens
-  let base = URL(string: "https://api.igdb.com/v4/")!
+  let client: IGDBAPI.Client
 
   let name = "igdb"
   let typeID = "video-game"
@@ -27,9 +33,21 @@ struct IGDBSource: CatalogueSource {
     "release_dates.platform.name", "platforms.id", "platforms.name",
   ].joined(separator: ",")
 
-  func barcode(_ query: BarcodeQuery) async throws(SourceFailure) -> [Components.Schemas.Candidate] { [] }
+  init(connection: SupplierConnection, tokens: TwitchTokens) {
+    self.connection = connection
+    self.tokens = tokens
+    self.client = IGDBAPI.Client(
+      serverURL: try! IGDBAPI.Servers.Server1.url(),
+      transport: SupplierTransport(connection: connection),
+      middlewares: [
+        HeadersMiddleware { ["Client-ID": tokens.clientID, "Authorization": "Bearer \(try await tokens.token())"] }
+      ]
+    )
+  }
 
-  func search(_ query: SourceQuery) async throws(SourceFailure) -> [Components.Schemas.Candidate] {
+  func barcode(_ query: BarcodeQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] { [] }
+
+  func search(_ query: SupplierQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] {
     guard !query.title.isEmpty else { return [] }
     let games = try await games(
       "search \"\(Self.escape(query.title))\"; fields \(Self.fields); limit \(min(20, query.limit * 2));"
@@ -56,7 +74,7 @@ struct IGDBSource: CatalogueSource {
     return candidates
   }
 
-  func work(id: String) async throws(SourceFailure) -> Components.Schemas.Work? {
+  func work(id: String) async throws(SupplierFailure) -> Components.Schemas.Work? {
     let prefix = "igdb:game:"
     guard id.hasPrefix(prefix), let number = Int(id.dropFirst(prefix.count)), number > 0 else { return nil }
     guard let game = try await games("fields \(Self.fields); where id = \(number); limit 1;").first,
@@ -69,7 +87,7 @@ struct IGDBSource: CatalogueSource {
       series: series.isEmpty ? nil : Array(Set(series)).sorted(),
       releases: Self.releases(game).map { release in
         .init(
-          releaseID: "igdb:game:\(game.id):\(release.platformID.map(String.init) ?? "any"):\(release.region ?? "any")",
+          releaseID: Self.releaseID(game, release),
           typeID: typeID,
           subtype: release.subtype,
           title: title,
@@ -82,22 +100,15 @@ struct IGDBSource: CatalogueSource {
 
   // MARK: - requests
 
-  private func games(_ query: String) async throws(SourceFailure) -> [Game] {
+  private func games(_ query: String) async throws(SupplierFailure) -> [Game] {
     var retried = false
     while true {
-      let token = try await tokens.token()
-      let request = OutboundRequest(
-        method: .post,
-        url: base.appendingPathComponent("games"),
-        headers: [
-          "Client-ID": tokens.clientID, "Authorization": "Bearer \(token)", "Accept": "application/json",
-          "Content-Type": "text/plain",
-        ],
-        body: Data(query.utf8)
-      )
-      do {
-        guard let data = try await connection.send(request) else { return [] }
-        return try connection.decode([Game].self, from: data)
+      do throws(SupplierFailure) {
+        let output = try await connection.call { try await client.games(body: .plainText(HTTPBody(query))) }
+        switch output {
+        case .ok(let ok): return try await connection.decoded { try ok.body.json }
+        case .undocumented(let status, _): throw .failed("http-\(status / 100)xx")
+        }
       } catch .unauthorized where !retried {
         // The token expired early or was revoked: fetch a new one, once.
         await tokens.invalidate()
@@ -116,6 +127,15 @@ struct IGDBSource: CatalogueSource {
     var year: Int?
   }
 
+  static func releaseID(_ game: Game, _ release: Release) -> String {
+    "igdb:game:\(game.id):\(release.platformID.map(String.init) ?? "any"):\(release.region ?? "any")"
+  }
+
+  /// The platform's name: the type file's preset when the platform is a subtype, IGDB's own otherwise.
+  static func platformName(_ name: String?) -> String? {
+    VideoGamePlatforms.platform(subtype: VideoGamePlatforms.subtype(igdbName: name))?.name ?? TextMatch.clean(name)
+  }
+
   /// One per platform and region the game was released in, or one with neither if IGDB lists none.
   static func releases(_ game: Game) -> [Release] {
     var seen = Set<Release>()
@@ -123,10 +143,10 @@ struct IGDBSource: CatalogueSource {
     for date in game.releaseDates ?? [] {
       let release = Release(
         platformID: date.platform?.id,
-        platformName: TextMatch.clean(date.platform?.name),
+        platformName: platformName(date.platform?.name),
         subtype: VideoGamePlatforms.subtype(igdbName: date.platform?.name),
         region: VideoGamePlatforms.region(date.releaseRegion?.region ?? date.region.map(String.init)),
-        year: date.y
+        year: date.y.flatMap { TextMatch.years.contains($0) ? $0 : nil }
       )
       if seen.insert(release).inserted { releases.append(release) }
     }
@@ -135,14 +155,14 @@ struct IGDBSource: CatalogueSource {
         releases.append(
           .init(
             platformID: platform.id,
-            platformName: TextMatch.clean(platform.name),
+            platformName: platformName(platform.name),
             subtype: VideoGamePlatforms.subtype(igdbName: platform.name),
-            year: game.firstReleaseDate.map(Self.year)
+            year: game.firstReleaseDate.flatMap(Self.year)
           )
         )
       }
     }
-    if releases.isEmpty { releases.append(.init(year: game.firstReleaseDate.map(Self.year))) }
+    if releases.isEmpty { releases.append(.init(year: game.firstReleaseDate.flatMap(Self.year))) }
     return Array(releases.prefix(12))
   }
 
@@ -161,12 +181,12 @@ struct IGDBSource: CatalogueSource {
     if let region = release.region { fields["region"] = .case1(region) }
     var reasons: [Components.Schemas.Reason] = [.init(kind: reason)]
     if release.subtype != nil { reasons.append(.init(kind: .subtype)) }
-    let cover = game.cover?.imageID.flatMap { id -> String? in
-      guard id.allSatisfy({ $0.isLetter || $0.isNumber }), id.count <= 64 else { return nil }
+    let cover = game.cover?.imageId.flatMap { id -> String? in
+      guard id.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }), id.count <= 64 else { return nil }
       return allowedImageURL("https://images.igdb.com/igdb/image/upload/t_cover_big/\(id).jpg", hosts: Self.imageHosts)
     }
     return .init(
-      releaseID: "igdb:game:\(game.id):\(release.platformID.map(String.init) ?? "any"):\(release.region ?? "any")",
+      releaseID: Self.releaseID(game, release),
       workID: "igdb:game:\(game.id)",
       typeID: typeID,
       subtype: release.subtype,
@@ -183,15 +203,18 @@ struct IGDBSource: CatalogueSource {
     )
   }
 
-  static func year(_ timestamp: Int) -> Int {
-    Calendar(identifier: .gregorian).dateComponents(
+  /// The UTC year of a Unix timestamp, within the years a candidate can carry.
+  static func year(_ timestamp: Int) -> Int? {
+    guard abs(timestamp) < 10_000_000_000 else { return nil }
+    let year = Calendar(identifier: .gregorian).dateComponents(
       in: TimeZone(identifier: "UTC")!,
       from: Date(timeIntervalSince1970: TimeInterval(timestamp))
-    ).year ?? 0
+    ).year
+    return year.flatMap { TextMatch.years.contains($0) ? $0 : nil }
   }
 
-  /// IGDB's query language quotes strings with `"`; quotes, backslashes and control characters are dropped from the
-  /// words, so they can't end the string and add a clause (D-22).
+  /// IGDB's query language quotes strings with `"`; quotes, backslashes, semicolons and control characters are
+  /// dropped from the words, so they can't end the string and add a clause (D-22).
   static func escape(_ text: String) -> String {
     String(
       text.prefix(200).unicodeScalars
@@ -199,94 +222,57 @@ struct IGDBSource: CatalogueSource {
         .map(Character.init)
     )
   }
-
-  // MARK: - wire
-
-  struct Game: Decodable {
-    var id: Int
-    var name: String?
-    var firstReleaseDate: Int?
-    var cover: Cover?
-    var franchises: [Named]?
-    var collections: [Named]?
-    var involvedCompanies: [InvolvedCompany]?
-    var releaseDates: [ReleaseDate]?
-    var platforms: [Platform]?
-
-    enum CodingKeys: String, CodingKey {
-      case id, name, cover, franchises, collections, platforms
-      case firstReleaseDate = "first_release_date"
-      case involvedCompanies = "involved_companies"
-      case releaseDates = "release_dates"
-    }
-  }
-
-  struct Cover: Decodable {
-    var imageID: String?
-
-    enum CodingKeys: String, CodingKey { case imageID = "image_id" }
-  }
-
-  struct Named: Decodable {
-    var name: String?
-  }
-
-  struct InvolvedCompany: Decodable {
-    var company: Named?
-    var publisher: Bool?
-  }
-
-  struct ReleaseDate: Decodable {
-    var y: Int?
-    var region: Int?
-    var releaseRegion: ReleaseRegion?
-    var platform: Platform?
-
-    enum CodingKeys: String, CodingKey {
-      case y, region, platform
-      case releaseRegion = "release_region"
-    }
-  }
-
-  struct ReleaseRegion: Decodable {
-    var region: String?
-  }
-
-  struct Platform: Decodable {
-    var id: Int?
-    var name: String?
-  }
 }
 
-/// Twitch's client-credentials token for IGDB, fetched on first use and again before it expires. The secret goes in
-/// the POST body, never in a URL (D-22).
+/// Twitch's client-credentials token for IGDB, through the client generated from `api/sources/twitch.openapi.yaml`:
+/// fetched on first use and again before it expires. The secret goes in the form body, never in a URL (D-22).
+/// Callers that arrive while a fetch is in flight wait for that fetch instead of starting their own.
 actor TwitchTokens {
   nonisolated let clientID: String
   private let clientSecret: String
-  private let connection: SourceConnection
+  private let connection: SupplierConnection
+  private let client: TwitchAPI.Client
   private var current: (token: String, expires: ContinuousClock.Instant)?
+  private var inFlight: Task<String, any Error>?
 
-  init(clientID: String, clientSecret: String, connection: SourceConnection) {
+  init(clientID: String, clientSecret: String, connection: SupplierConnection) {
     self.clientID = clientID
     self.clientSecret = clientSecret
     self.connection = connection
+    self.client = TwitchAPI.Client(
+      serverURL: try! TwitchAPI.Servers.Server1.url(),
+      transport: SupplierTransport(connection: connection)
+    )
   }
 
-  func token() async throws(SourceFailure) -> String {
+  func token() async throws(SupplierFailure) -> String {
     if let current, current.expires > .now { return current.token }
-    var form = URLComponents()
-    form.queryItems = [
-      .init(name: "client_id", value: clientID), .init(name: "client_secret", value: clientSecret),
-      .init(name: "grant_type", value: "client_credentials"),
-    ]
-    let request = OutboundRequest(
-      method: .post,
-      url: URL(string: "https://id.twitch.tv/oauth2/token")!,
-      headers: ["Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"],
-      body: Data((form.percentEncodedQuery ?? "").utf8)
-    )
-    guard let data = try await connection.send(request) else { throw .unauthorized }
-    let answer = try connection.decode(TokenAnswer.self, from: data)
+    let task: Task<String, any Error>
+    if let inFlight {
+      task = inFlight
+    } else {
+      task = Task { try await self.fetch() }
+      inFlight = task
+    }
+    do {
+      let token = try await task.value
+      inFlight = nil
+      return token
+    } catch {
+      inFlight = nil
+      throw error as? SupplierFailure ?? .failed("token")
+    }
+  }
+
+  private func fetch() async throws(SupplierFailure) -> String {
+    let (client, clientID, clientSecret) = (self.client, self.clientID, self.clientSecret)
+    let output = try await connection.call {
+      try await client.token(
+        body: .urlEncodedForm(.init(clientId: clientID, clientSecret: clientSecret, grantType: .clientCredentials))
+      )
+    }
+    guard case .ok(let ok) = output else { throw .unauthorized }
+    let answer = try await connection.decoded { try ok.body.json }
     guard !answer.accessToken.isEmpty else { throw .unauthorized }
     // Renew a minute early, and at least every day.
     let lifetime = min(max(answer.expiresIn - 60, 60), 24 * 3600)
@@ -296,15 +282,5 @@ actor TwitchTokens {
 
   func invalidate() {
     current = nil
-  }
-
-  struct TokenAnswer: Decodable {
-    var accessToken: String
-    var expiresIn: Int
-
-    enum CodingKeys: String, CodingKey {
-      case accessToken = "access_token"
-      case expiresIn = "expires_in"
-    }
   }
 }

@@ -1,16 +1,19 @@
 import AsyncHTTPClient
 package import Foundation
+import HTTPTypes
 import Logging
 import NIOCore
 import NIOHTTP1
+import OpenAPIRuntime
 
-// What every lookup source shares (PLAN §4, DECISIONS D-22): a transport tests can replace, an outbound pace within
-// the provider's terms, a circuit breaker, timeouts, a bounded answer cache, and the text matching that turns a
-// provider's answers into ranked candidates.
+// What every data supplier shares (PLAN §4, DECISIONS D-22, D-23). Each supplier's client is generated from its
+// OpenAPI description (`api/sources/`), and every client sends through `SupplierTransport`: an outbound pace within
+// the provider's terms, a circuit breaker, timeouts, a size cap and no redirects, over a transport tests replace.
+// Also here: the bounded answer cache, and the text matching that ranks every supplier's answers the same way.
 
-// MARK: - transport
+// MARK: - the wire
 
-/// One outbound HTTP request. Sources build these; the transport sends them.
+/// One outbound HTTP request, as `SupplierTransport` hands it to an `HTTPTransport`.
 package struct OutboundRequest: Sendable, Equatable {
   package enum Method: String, Sendable { case get = "GET", post = "POST" }
 
@@ -44,24 +47,24 @@ package protocol HTTPTransport: Sendable {
   func send(_ request: OutboundRequest, timeout: Duration, maximumBytes: Int) async throws -> OutboundResponse
 }
 
-/// The production transport: AsyncHTTPClient on the shared event loop group, HTTPS only.
+/// The production transport: AsyncHTTPClient, HTTPS only, and no redirects. A redirect would carry a supplier's key
+/// (a header, or ScreenScraper's query string) to wherever it points; it's answered as a failure instead (D-23).
 struct AsyncHTTPTransport: HTTPTransport {
-  let client: HTTPClient
-
-  init(client: HTTPClient = .shared) {
-    self.client = client
-  }
+  static let client = HTTPClient(
+    eventLoopGroup: HTTPClient.defaultEventLoopGroup,
+    configuration: .init(redirectConfiguration: .disallow)
+  )
 
   func send(_ request: OutboundRequest, timeout: Duration, maximumBytes: Int) async throws
     -> OutboundResponse
   {
-    guard request.url.scheme == "https" else { throw SourceFailure.refusedURL }
+    guard request.url.scheme == "https" else { throw SupplierFailure.refusedURL }
     var outbound = HTTPClientRequest(url: request.url.absoluteString)
     outbound.method = request.method == .get ? .GET : .POST
     for (name, value) in request.headers { outbound.headers.add(name: name, value: value) }
     if let body = request.body { outbound.body = .bytes(ByteBuffer(bytes: body)) }
     let seconds = Int64(timeout.components.seconds)
-    let response = try await client.execute(outbound, timeout: .seconds(max(1, seconds)))
+    let response = try await Self.client.execute(outbound, timeout: .seconds(max(1, seconds)))
     let buffer = try await response.body.collect(upTo: maximumBytes)
     var headers: [String: String] = [:]
     for header in response.headers { headers[header.name.lowercased()] = header.value }
@@ -71,13 +74,13 @@ struct AsyncHTTPTransport: HTTPTransport {
 
 // MARK: - failures
 
-/// Why a source didn't answer. Logged by case, never with the query; mapped to `SourceUnavailable` (503).
-package enum SourceFailure: Error, Equatable {
-  /// The provider said 429 or 503, or our own pace would wait too long.
+/// Why a supplier didn't answer. Logged by case, never with the query; mapped to `SourceUnavailable` (503).
+package enum SupplierFailure: Error, Equatable {
+  /// The provider said 429 or 503 (or ScreenScraper's 423, 430, 431), or our own pace would wait too long.
   case busy(retryAfter: Int)
   /// The breaker is open after repeated failures.
   case circuitOpen(retryAfter: Int)
-  /// Network error, timeout, a 5xx, or an answer we couldn't read.
+  /// Network error, timeout, a redirect, a 5xx, or an answer we couldn't read.
   case failed(String)
   /// The credentials were refused (401/403): an operator problem, not the user's.
   case unauthorized
@@ -105,7 +108,7 @@ package enum SourceFailure: Error, Equatable {
 
 // MARK: - pace
 
-/// Spaces a source's requests at least `interval` apart, across every request the server makes to it. A caller
+/// Spaces a supplier's requests at least `interval` apart, across every request the server makes to it. A caller
 /// that would wait longer than `maximumWait` is refused with `busy` instead, so a request never hangs on a queue.
 actor Pacer {
   let interval: Duration
@@ -123,7 +126,7 @@ actor Pacer {
     let slot = max(now, nextSlot)
     let wait = slot - now
     guard wait <= maximumWait else {
-      throw SourceFailure.busy(retryAfter: Int(wait.components.seconds) + 1)
+      throw SupplierFailure.busy(retryAfter: Int(wait.components.seconds) + 1)
     }
     nextSlot = slot + interval
     if wait > .zero { try await Task.sleep(for: wait) }
@@ -132,7 +135,7 @@ actor Pacer {
 
 // MARK: - circuit breaker
 
-/// After `threshold` failures in a row, a source is skipped for `coolDown`; one success closes it again.
+/// After `threshold` failures in a row, a supplier is skipped for `coolDown`; one success closes it again.
 actor CircuitBreaker {
   let threshold: Int
   let coolDown: Duration
@@ -148,7 +151,7 @@ actor CircuitBreaker {
     guard let openUntil else { return }
     let now = ContinuousClock.now
     if now < openUntil {
-      throw SourceFailure.circuitOpen(retryAfter: Int((openUntil - now).components.seconds) + 1)
+      throw SupplierFailure.circuitOpen(retryAfter: Int((openUntil - now).components.seconds) + 1)
     }
     self.openUntil = nil  // half-open: the next call decides
   }
@@ -166,17 +169,22 @@ actor CircuitBreaker {
 
 // MARK: - cache
 
-/// Answers kept in memory, keyed by source, operation and normalised query: a barcode's answer is the same for
-/// everyone (PLAN §4). Bounded; the oldest entries go first. Errors are never cached.
+/// Answers kept in memory, keyed by supplier, operation and normalised query: a barcode's answer is the same for
+/// everyone (PLAN §4). Bounded by entries, each answer itself bounded by its supplier (at most 10 candidates); the
+/// oldest entries go first. Errors are never cached.
 actor AnswerCache<Value: Sendable> {
   private struct Entry {
     var value: Value
     var expires: ContinuousClock.Instant
+    var sequence: Int
   }
 
   let capacity: Int
   private var entries: [String: Entry] = [:]
-  private var order: [String] = []
+  /// Insertion order, with the sequence number each key had then: a key stored again gets a new number, so its old
+  /// place in the order no longer evicts it.
+  private var order: [(key: String, sequence: Int)] = []
+  private var nextSequence = 0
 
   init(capacity: Int = 10_000) {
     self.capacity = max(1, capacity)
@@ -192,25 +200,34 @@ actor AnswerCache<Value: Sendable> {
   }
 
   func store(_ value: Value, for key: String, lifetime: Duration) {
-    if entries[key] == nil { order.append(key) }
-    entries[key] = Entry(value: value, expires: .now + lifetime)
+    nextSequence += 1
+    entries[key] = Entry(value: value, expires: .now + lifetime, sequence: nextSequence)
+    order.append((key, nextSequence))
     if entries.count > capacity {
       // Drop the oldest tenth in one go, so eviction stays cheap.
-      let drop = max(1, capacity / 10)
-      for key in order.prefix(drop) { entries[key] = nil }
-      order.removeFirst(min(drop, order.count))
+      var dropped = 0
+      var index = 0
+      while dropped < max(1, capacity / 10), index < order.count {
+        let (oldKey, sequence) = order[index]
+        if entries[oldKey]?.sequence == sequence {
+          entries[oldKey] = nil
+          dropped += 1
+        }
+        index += 1
+      }
+      order.removeFirst(index)
     }
-    if order.count > capacity * 2 { order = order.filter { entries[$0] != nil } }
+    if order.count > capacity * 2 { order = order.filter { entries[$0.key]?.sequence == $0.sequence } }
   }
 
   var count: Int { entries.count }
 }
 
-// MARK: - one source's connection
+// MARK: - one supplier's connection
 
-/// A source's way out: its pace, its breaker, its timeout, its size cap, and its logger. Every request goes through
-/// `send`, which turns every failure into a `SourceFailure` and counts it.
-struct SourceConnection: Sendable {
+/// A supplier's way out: its pace, its breaker, its timeout, its size cap, and its logger. Every request goes
+/// through `exchange`, which turns every failure into a `SupplierFailure` and counts it.
+struct SupplierConnection: Sendable {
   let name: String
   let transport: any HTTPTransport
   let pacer: Pacer
@@ -237,12 +254,12 @@ struct SourceConnection: Sendable {
     self.logger = logger
   }
 
-  /// The body of a 2xx answer, or nil for a 404. Anything else throws a `SourceFailure`.
-  func send(_ request: OutboundRequest) async throws(SourceFailure) -> Data? {
+  /// A 2xx or a 404 answer. Anything else throws a `SupplierFailure`.
+  func exchange(_ request: OutboundRequest) async throws(SupplierFailure) -> OutboundResponse {
     do {
       try await breaker.check()
       try await pacer.acquire()
-    } catch let failure as SourceFailure {
+    } catch let failure as SupplierFailure {
       throw failure
     } catch {
       throw .failed("cancelled")
@@ -250,57 +267,133 @@ struct SourceConnection: Sendable {
     let response: OutboundResponse
     do {
       response = try await transport.send(request, timeout: timeout, maximumBytes: maximumBytes)
-    } catch let failure as SourceFailure {
+    } catch let failure as SupplierFailure {
       await record(failure)
       throw failure
     } catch {
-      let failure = SourceFailure.failed("network")
+      let failure = SupplierFailure.failed("network")
       await record(failure)
       throw failure
     }
     switch response.status {
-    case 200..<300:
+    case 200..<300, 404:
       await breaker.success()
-      return response.body
-    case 404:
-      await breaker.success()
-      return nil
+      return response
+    case 300..<400:
+      let failure = SupplierFailure.failed("redirect")
+      await record(failure)
+      throw failure
     case 401, 403:
       await record(.unauthorized)
       throw .unauthorized
-    // 423, 430 and 431 are ScreenScraper's "closed", "daily quota" and "too many unknown requests".
     case 429, 503, 423, 430, 431:
       let retryAfter =
         response.headers["retry-after"].flatMap { Int($0) } ?? (response.status == 430 ? 3600 : 30)
-      let failure = SourceFailure.busy(retryAfter: min(max(retryAfter, 1), 3600))
+      let failure = SupplierFailure.busy(retryAfter: min(max(retryAfter, 1), 3600))
       await record(failure)
       throw failure
     default:
-      let failure = SourceFailure.failed("http-\(response.status / 100)xx")
+      let failure = SupplierFailure.failed("http-\(response.status / 100)xx")
       await record(failure)
       throw failure
     }
   }
 
-  /// Logs the source and the reason, never the query or the answer.
-  func record(_ failure: SourceFailure) async {
+  /// Runs one generated-client call: a `SupplierFailure` from the transport comes out as itself, an answer the
+  /// client couldn't decode as `undecodable` (counted by the breaker), anything else as `failed`.
+  func call<T: Sendable>(_ body: @Sendable () async throws -> T) async throws(SupplierFailure) -> T {
+    do {
+      return try await body()
+    } catch let failure as SupplierFailure {
+      throw failure
+    } catch let error as ClientError {
+      if let failure = error.underlyingError as? SupplierFailure { throw failure }
+      await record(.failed("undecodable"))
+      throw .failed("undecodable")
+    } catch {
+      await record(.failed("undecodable"))
+      throw .failed("undecodable")
+    }
+  }
+
+  /// Reads a decoded answer's body; a body of the wrong shape is `undecodable`, counted by the breaker.
+  func decoded<T>(_ body: () throws -> T) async throws(SupplierFailure) -> T {
+    do {
+      return try body()
+    } catch {
+      await record(.failed("undecodable"))
+      throw .failed("undecodable")
+    }
+  }
+
+  /// Logs the supplier and the reason, never the query or the answer.
+  func record(_ failure: SupplierFailure) async {
     if case .busy = failure {} else { await breaker.failure() }
     logger.warning("source failed", metadata: ["source": "\(name)", "reason": "\(failure.reason)"])
   }
+}
 
-  func decode<T: Decodable>(_ type: T.Type, from data: Data) throws(SourceFailure) -> T {
-    do {
-      return try JSONDecoder().decode(type, from: data)
-    } catch {
-      logger.warning("source failed", metadata: ["source": "\(name)", "reason": "undecodable"])
-      throw .failed("undecodable")
+/// The generated clients' transport: every request goes through the supplier's connection (D-23).
+struct SupplierTransport: ClientTransport {
+  let connection: SupplierConnection
+
+  func send(
+    _ request: HTTPRequest,
+    body: HTTPBody?,
+    baseURL: URL,
+    operationID: String
+  ) async throws -> (HTTPResponse, HTTPBody?) {
+    guard let url = URL(string: baseURL.absoluteString + (request.path ?? "")) else {
+      throw SupplierFailure.refusedURL
     }
+    var headers: [String: String] = [:]
+    for field in request.headerFields {
+      let name = field.name.rawName
+      headers[name] = headers[name].map { "\($0), \(field.value)" } ?? field.value
+    }
+    var data: Data?
+    if let body {
+      do { data = try await Data(collecting: body, upTo: 64 * 1024) } catch { throw SupplierFailure.failed("body") }
+    }
+    let outbound = OutboundRequest(
+      method: request.method == .post ? .post : .get,
+      url: url,
+      headers: headers,
+      body: data
+    )
+    let response = try await connection.exchange(outbound)
+    var fields = HTTPFields()
+    for (name, value) in response.headers {
+      if let name = HTTPField.Name(name) { fields[name] = value }
+    }
+    return (HTTPResponse(status: .init(code: response.status), headerFields: fields), HTTPBody(response.body))
+  }
+}
+
+/// Adds a supplier's headers (its key, its token, its User-Agent) to every request. OpenAPI ignores an
+/// `Authorization` header parameter, so keys can't be in the descriptions: they're added here, per request (D-23).
+struct HeadersMiddleware: ClientMiddleware {
+  let headers: @Sendable () async throws -> [String: String]
+
+  func intercept(
+    _ request: HTTPRequest,
+    body: HTTPBody?,
+    baseURL: URL,
+    operationID: String,
+    next: @Sendable (HTTPRequest, HTTPBody?, URL) async throws -> (HTTPResponse, HTTPBody?)
+  ) async throws -> (HTTPResponse, HTTPBody?) {
+    var request = request
+    for (name, value) in try await headers() {
+      guard let field = HTTPField.Name(name) else { continue }
+      request.headerFields[field] = value
+    }
+    return try await next(request, body, baseURL)
   }
 }
 
 // MARK: - text
 
-/// Normalising and comparing titles, so every source ranks its answers the same way (D-22).
+/// Normalising and comparing titles, so every supplier ranks its answers the same way (D-22).
 enum TextMatch {
   /// Lower case, no diacritics, punctuation as spaces, "&" as "and", collapsed whitespace.
   static func normalise(_ text: String) -> String {
@@ -355,6 +448,9 @@ enum TextMatch {
     return (0..<(characters.count - 1)).map { String(characters[$0...$0 + 1]) }
   }
 
+  /// The years a ranking compares. Anything else is ignored rather than computed with, so no year can overflow.
+  static let years = 1800...2100
+
   /// The query's confidence for a candidate (D-22): title 70 %, subtitle 20 %, year 10 %, each counted only when
   /// the query gives it, so a title-only query can still reach 1.
   static func confidence(
@@ -371,9 +467,11 @@ enum TextMatch {
       weight += 0.2
       score += 0.2 * (candidateSubtitle.map { similarity(subtitle, $0) } ?? 0)
     }
-    if let year {
+    if let year, years.contains(year) {
       weight += 0.1
-      if let candidateYear { score += 0.1 * (candidateYear == year ? 1 : abs(candidateYear - year) == 1 ? 0.5 : 0) }
+      if let candidateYear, years.contains(candidateYear) {
+        score += 0.1 * (candidateYear == year ? 1 : abs(candidateYear - year) == 1 ? 0.5 : 0)
+      }
     }
     return min(1, max(0, score / weight))
   }
@@ -401,12 +499,12 @@ enum TextMatch {
 
   /// The year of an ISO date ("1997-05-21", "1997"), if it has one.
   static func year(_ date: String?) -> Int? {
-    guard let date, date.count >= 4, let year = Int(date.prefix(4)), (1800...2100).contains(year) else { return nil }
+    guard let date, date.count >= 4, let year = Int(date.prefix(4)), years.contains(year) else { return nil }
     return year
   }
 }
 
-/// An image URL a source gave us, kept only when it's HTTPS on one of the hosts we expect (D-22).
+/// An image URL a supplier gave us, kept only when it's HTTPS on one of the hosts we expect (D-22).
 func allowedImageURL(_ raw: String?, hosts: Set<String>) -> String? {
   guard var raw, !raw.isEmpty else { return nil }
   if raw.hasPrefix("//") { raw = "https:" + raw }

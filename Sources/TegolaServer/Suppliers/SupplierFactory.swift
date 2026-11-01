@@ -5,14 +5,14 @@ func makeLookupService(
   _ settings: SourceSettings,
   transport: any HTTPTransport,
   logger: Logger
-) -> SourcesLookupService {
+) -> SuppliersLookupService {
   var sourceLogger = logger
   sourceLogger[metadataKey: "component"] = "source"
-  var sources: [any CatalogueSource] = []
+  var sources: [any DataSupplier] = []
   if let contact = settings.musicBrainzContact {
     sources.append(
-      MusicBrainzSource(
-        connection: SourceConnection(
+      MusicBrainzSupplier(
+        connection: SupplierConnection(
           name: "musicbrainz",
           transport: transport,
           interval: .milliseconds(1100),
@@ -24,8 +24,8 @@ func makeLookupService(
   }
   if let igdb = settings.igdb {
     sources.append(
-      IGDBSource(
-        connection: SourceConnection(
+      IGDBSupplier(
+        connection: SupplierConnection(
           name: "igdb",
           transport: transport,
           interval: .milliseconds(260),
@@ -34,7 +34,7 @@ func makeLookupService(
         tokens: TwitchTokens(
           clientID: igdb.id,
           clientSecret: igdb.secret,
-          connection: SourceConnection(
+          connection: SupplierConnection(
             name: "twitch",
             transport: transport,
             interval: .milliseconds(500),
@@ -46,8 +46,8 @@ func makeLookupService(
   }
   if let screenScraper = settings.screenScraper {
     sources.append(
-      ScreenScraperSource(
-        connection: SourceConnection(
+      ScreenScraperSupplier(
+        connection: SupplierConnection(
           name: "screenscraper",
           transport: transport,
           interval: .milliseconds(1200),
@@ -64,8 +64,8 @@ func makeLookupService(
   }
   if let token = settings.boardGameGeekToken {
     sources.append(
-      BoardGameGeekSource(
-        connection: SourceConnection(
+      BoardGameGeekSupplier(
+        connection: SupplierConnection(
           name: "boardgamegeek",
           transport: transport,
           interval: .seconds(2),
@@ -76,5 +76,5 @@ func makeLookupService(
       )
     )
   }
-  return SourcesLookupService(sources: sources)
+  return SuppliersLookupService(sources: sources)
 }

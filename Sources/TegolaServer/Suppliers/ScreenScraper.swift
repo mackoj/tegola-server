@@ -1,14 +1,19 @@
 import Foundation
+import OpenAPIRuntime
+import ScreenScraperAPI
 
-/// Video games from ScreenScraper (D-22), words only, strong on retro platforms and regional titles. It needs a
-/// developer id and password (and, optionally, a member's, for a higher quota). Its API takes them in the query
-/// string, so these URLs are never logged, and its media URLs, which carry them too, are never passed to the app:
-/// candidates from ScreenScraper have no images.
+/// Video games from ScreenScraper (D-22), through the client generated from `api/sources/screenscraper.openapi.yaml`
+/// (D-23). Words only, strong on retro platforms and regional titles. It needs a developer id and password (and,
+/// optionally, a member's, for a higher quota). Its API takes them in the query string, so these URLs are never
+/// logged, and its media URLs, which carry them too, are never passed to the app: candidates from ScreenScraper have
+/// no images. An answer without `jeux` (or `jeu`) is an error page, not "no match".
 /// Works are `screenscraper:game:<id>`, releases `screenscraper:game:<id>:<region or any>`.
-struct ScreenScraperSource: CatalogueSource {
-  let connection: SourceConnection
+struct ScreenScraperSupplier: DataSupplier {
+  typealias Game = ScreenScraperAPI.Components.Schemas.Game
+
+  let connection: SupplierConnection
   let credentials: ScreenScraperCredentials
-  let base = URL(string: "https://api.screenscraper.fr/api2/")!
+  let client: ScreenScraperAPI.Client
 
   let name = "screenscraper"
   let typeID = "video-game"
@@ -21,15 +26,39 @@ struct ScreenScraperSource: CatalogueSource {
     attribution: "Data from ScreenScraper.fr"
   )
 
-  func barcode(_ query: BarcodeQuery) async throws(SourceFailure) -> [Components.Schemas.Candidate] { [] }
+  init(connection: SupplierConnection, credentials: ScreenScraperCredentials) {
+    self.connection = connection
+    self.credentials = credentials
+    self.client = ScreenScraperAPI.Client(
+      serverURL: try! ScreenScraperAPI.Servers.Server1.url(),
+      transport: SupplierTransport(connection: connection)
+    )
+  }
 
-  func search(_ query: SourceQuery) async throws(SourceFailure) -> [Components.Schemas.Candidate] {
+  func barcode(_ query: BarcodeQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] { [] }
+
+  func search(_ query: SupplierQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] {
     guard !query.title.isEmpty else { return [] }
-    var items = [URLQueryItem(name: "recherche", value: String(query.title.prefix(200)))]
     let platform = VideoGamePlatforms.platform(subtype: query.subtype)
-    if let platform { items.append(.init(name: "systemeid", value: String(platform.screenScraperSystem))) }
-    guard let data = try await connection.send(request("jeuRecherche.php", items)) else { return [] }
-    let games = try connection.decode(SearchAnswer.self, from: data).response.jeux ?? []
+    let output = try await connection.call {
+      try await client.search(
+        query: .init(
+          devid: credentials.developerID,
+          devpassword: credentials.developerPassword,
+          softname: "tegola-server",
+          output: .json,
+          ssid: credentials.user,
+          sspassword: credentials.password,
+          recherche: String(query.title.prefix(200)),
+          systemeid: platform?.screenScraperSystem
+        )
+      )
+    }
+    let games: [Game]
+    switch output {
+    case .ok(let ok): games = try await connection.decoded { try ok.body.json.response.jeux }
+    case .undocumented(let status, _): throw .failed("http-\(status / 100)xx")
+    }
     var candidates: [Components.Schemas.Candidate] = []
     for game in games.prefix(query.limit * 2) {
       guard let id = game.id.flatMap(Int.init), id > 0 else { continue }  // an empty search answers [{}]
@@ -43,25 +72,43 @@ struct ScreenScraperSource: CatalogueSource {
           year: query.year,
           candidateYear: release.year
         )
-        candidates.append(candidate(id: id, game: game, release: release, confidence: confidence, reason: query.reason))
+        candidates.append(
+          candidate(id: id, game: game, release: release, confidence: confidence, reason: query.reason)
+        )
       }
     }
     return candidates
   }
 
-  func work(id: String) async throws(SourceFailure) -> Components.Schemas.Work? {
+  func work(id: String) async throws(SupplierFailure) -> Components.Schemas.Work? {
     let prefix = "screenscraper:game:"
     guard id.hasPrefix(prefix), let number = Int(id.dropFirst(prefix.count)), number > 0 else { return nil }
-    guard let data = try await connection.send(request("jeuInfos.php", [.init(name: "gameid", value: String(number))]))
-    else { return nil }
-    guard let game = try connection.decode(InfoAnswer.self, from: data).response.jeu,
-      let release = Self.releases(game).first
-    else { return nil }
+    let output = try await connection.call {
+      try await client.game(
+        query: .init(
+          devid: credentials.developerID,
+          devpassword: credentials.developerPassword,
+          softname: "tegola-server",
+          output: .json,
+          ssid: credentials.user,
+          sspassword: credentials.password,
+          gameid: number
+        )
+      )
+    }
+    let game: Game
+    switch output {
+    case .ok(let ok): game = try await connection.decoded { try ok.body.json.response.jeu }
+    case .notFound: return nil
+    case .undocumented(let status, _): throw .failed("http-\(status / 100)xx")
+    }
+    let releases = Self.releases(game)
+    guard let first = releases.first else { return nil }
     let subtype = VideoGamePlatforms.subtype(screenScraperSystem: game.systeme?.id.flatMap(Int.init))
     return .init(
       workID: id,
-      title: release.title,
-      releases: Self.releases(game).map {
+      title: first.title,
+      releases: releases.map {
         .init(
           releaseID: "screenscraper:game:\(number):\($0.region ?? "any")",
           typeID: typeID,
@@ -72,23 +119,6 @@ struct ScreenScraperSource: CatalogueSource {
         )
       }
     )
-  }
-
-  // MARK: - requests
-
-  private func request(_ endpoint: String, _ items: [URLQueryItem]) -> OutboundRequest {
-    var components = URLComponents(url: base.appendingPathComponent(endpoint), resolvingAgainstBaseURL: false)!
-    var query = [
-      URLQueryItem(name: "devid", value: credentials.developerID),
-      URLQueryItem(name: "devpassword", value: credentials.developerPassword),
-      URLQueryItem(name: "softname", value: "tegola-server"),
-      URLQueryItem(name: "output", value: "json"),
-    ]
-    if let user = credentials.user, let password = credentials.password {
-      query += [URLQueryItem(name: "ssid", value: user), URLQueryItem(name: "sspassword", value: password)]
-    }
-    components.queryItems = query + items
-    return OutboundRequest(url: components.url!, headers: ["Accept": "application/json"])
   }
 
   // MARK: - mapping
@@ -152,47 +182,14 @@ struct ScreenScraperSource: CatalogueSource {
       externalIDs: .init(additionalProperties: ["screenscraper": String(id)])
     )
   }
-
-  // MARK: - wire
-
-  struct SearchAnswer: Decodable {
-    var response: Response
-
-    struct Response: Decodable {
-      var jeux: [Game]?
-    }
-  }
-
-  struct InfoAnswer: Decodable {
-    var response: Response
-
-    struct Response: Decodable {
-      var jeu: Game?
-    }
-  }
-
-  struct Game: Decodable {
-    var id: String?
-    var noms: [Regional]?
-    var systeme: Named?
-    var editeur: Named?
-    var dates: [Regional]?
-  }
-
-  struct Regional: Decodable {
-    var region: String?
-    var text: String?
-  }
-
-  struct Named: Decodable {
-    var id: String?
-    var text: String?
-  }
 }
 
-struct ScreenScraperCredentials: Sendable {
+/// A ScreenScraper account. Its `description` never shows the passwords.
+struct ScreenScraperCredentials: Sendable, CustomStringConvertible {
   var developerID: String
   var developerPassword: String
   var user: String?
   var password: String?
+
+  var description: String { "ScreenScraperCredentials(developer, \(user == nil ? "no member" : "member"))" }
 }

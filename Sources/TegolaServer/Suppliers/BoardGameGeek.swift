@@ -1,18 +1,21 @@
+import BoardGameGeekAPI
 import Foundation
 import Logging
+import OpenAPIRuntime
 
 #if canImport(FoundationXML)
   import FoundationXML
 #endif
 
-/// Board games from BoardGameGeek's XML API 2 (D-22), words only: BGG has no barcode index (tegola's
-/// `board-games.yml` says so too). The API needs an application's bearer token, and attribution. A search is two
-/// requests: `search` for ids, then `thing` for the details of the best few. Releases and works are both
-/// `boardgamegeek:<id>`: BGG's unit is the game, not the edition.
-struct BoardGameGeekSource: CatalogueSource {
-  let connection: SourceConnection
-  let token: String
-  let base = URL(string: "https://boardgamegeek.com/xmlapi2/")!
+/// Board games from BoardGameGeek's XML API 2 (D-22), through the client generated from
+/// `api/sources/boardgamegeek.openapi.yaml` (D-23). Words only: BGG has no barcode index (tegola's `board-games.yml`
+/// says so too). The API needs an application's bearer token, and attribution. A search is two requests: `search`
+/// for ids, then `thing` for the details of the best few. Releases and works are both `boardgamegeek:<id>`: BGG's
+/// unit is the game, not the edition. Answers are XML, which the generated client leaves raw: they're parsed here,
+/// refused when they carry a DOCTYPE, and treated as an error page unless their root is `<items>`.
+struct BoardGameGeekSupplier: DataSupplier {
+  let connection: SupplierConnection
+  let client: BoardGameGeekAPI.Client
 
   let name = "boardgamegeek"
   let typeID = "board-games"
@@ -26,19 +29,27 @@ struct BoardGameGeekSource: CatalogueSource {
   )
   static let imageHosts: Set<String> = ["cf.geekdo-images.com"]
 
-  func barcode(_ query: BarcodeQuery) async throws(SourceFailure) -> [Components.Schemas.Candidate] { [] }
+  init(connection: SupplierConnection, token: String) {
+    self.connection = connection
+    self.client = BoardGameGeekAPI.Client(
+      serverURL: try! BoardGameGeekAPI.Servers.Server1.url(),
+      transport: SupplierTransport(connection: connection),
+      middlewares: [HeadersMiddleware { ["Authorization": "Bearer \(token)"] }]
+    )
+  }
 
-  func search(_ query: SourceQuery) async throws(SourceFailure) -> [Components.Schemas.Candidate] {
+  func barcode(_ query: BarcodeQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] { [] }
+
+  func search(_ query: SupplierQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] {
     guard !query.title.isEmpty else { return [] }
-    guard
-      let data = try await connection.send(
-        request(
-          "search",
-          [.init(name: "query", value: String(query.title.prefix(200))), .init(name: "type", value: "boardgame")]
-        )
-      )
-    else { return [] }
-    let hits = try parse(data)
+    let output = try await connection.call {
+      try await client.search(query: .init(query: String(query.title.prefix(200)), _type: .boardgame))
+    }
+    let hits: [Item]
+    switch output {
+    case .ok(let ok): hits = try await parse(try await connection.decoded { try ok.body.xml })
+    case .undocumented(let status, _): throw .failed("http-\(status / 100)xx")
+    }
     // The search answers names only; keep the closest few, then ask for their details in one request.
     let best = hits.sorted {
       TextMatch.similarity(query.title, $0.name ?? "") > TextMatch.similarity(query.title, $1.name ?? "")
@@ -61,7 +72,7 @@ struct BoardGameGeekSource: CatalogueSource {
     }
   }
 
-  func work(id: String) async throws(SourceFailure) -> Components.Schemas.Work? {
+  func work(id: String) async throws(SupplierFailure) -> Components.Schemas.Work? {
     guard id.hasPrefix(idPrefix), let number = Int(id.dropFirst(idPrefix.count)), number > 0,
       let game = try await things([number]).first, let title = TextMatch.clean(game.name)
     else { return nil }
@@ -74,34 +85,40 @@ struct BoardGameGeekSource: CatalogueSource {
 
   // MARK: - requests
 
-  private func things(_ ids: [Int]) async throws(SourceFailure) -> [Item] {
+  private func things(_ ids: [Int]) async throws(SupplierFailure) -> [Item] {
     let list = ids.filter { $0 > 0 }.map(String.init).joined(separator: ",")
-    guard !list.isEmpty,
-      let data = try await connection.send(
-        request("thing", [.init(name: "id", value: list), .init(name: "stats", value: "1")])
-      )
-    else { return [] }
-    return try parse(data).filter { $0.type == "boardgame" }
+    guard !list.isEmpty else { return [] }
+    let output = try await connection.call { try await client.thing(query: .init(id: list, stats: ._1)) }
+    switch output {
+    case .ok(let ok):
+      return try await parse(try await connection.decoded { try ok.body.xml }).filter { $0.type == "boardgame" }
+    case .undocumented(let status, _): throw .failed("http-\(status / 100)xx")
+    }
   }
 
-  private func request(_ endpoint: String, _ items: [URLQueryItem]) -> OutboundRequest {
-    var components = URLComponents(url: base.appendingPathComponent(endpoint), resolvingAgainstBaseURL: false)!
-    components.queryItems = items
-    return OutboundRequest(
-      url: components.url!,
-      headers: ["Authorization": "Bearer \(token)", "Accept": "application/xml"]
-    )
+  /// Reads an answer: at most the connection's size, no DOCTYPE or entity declaration (so no entity is ever
+  /// expanded or fetched, whatever the platform's parser does with them), and `<items>` as the root.
+  private func parse(_ body: HTTPBody) async throws(SupplierFailure) -> [Item] {
+    let data: Data
+    do { data = try await Data(collecting: body, upTo: connection.maximumBytes) } catch {
+      await connection.record(.failed("undecodable"))
+      throw .failed("undecodable")
+    }
+    guard let items = Self.parse(data) else {
+      await connection.record(.failed("undecodable"))
+      throw .failed("undecodable")
+    }
+    return items
   }
 
-  private func parse(_ data: Data) throws(SourceFailure) -> [Item] {
+  static func parse(_ data: Data) -> [Item]? {
+    let declarations = [Data("<!DOCTYPE".utf8), Data("<!ENTITY".utf8), Data("<!doctype".utf8)]
+    guard declarations.allSatisfy({ data.range(of: $0) == nil }) else { return nil }
     let reader = ItemsReader()
     let parser = XMLParser(data: data)
     parser.shouldResolveExternalEntities = false
     parser.delegate = reader
-    guard parser.parse() else {
-      connection.logger.warning("source failed", metadata: ["source": "\(name)", "reason": "undecodable"])
-      throw .failed("undecodable")
-    }
+    guard parser.parse(), reader.root == "items" else { return nil }
     return reader.items
   }
 
@@ -173,6 +190,8 @@ struct BoardGameGeekSource: CatalogueSource {
   /// Reads `<items><item …>` from a search or thing answer. The primary name wins over alternates.
   final class ItemsReader: NSObject, XMLParserDelegate {
     var items: [Item] = []
+    /// The document's root element: a real answer's is `items`.
+    private(set) var root: String?
     private var current: Item?
     private var text = ""
     private var primaryName = false
@@ -184,6 +203,7 @@ struct BoardGameGeekSource: CatalogueSource {
       qualifiedName: String?,
       attributes: [String: String] = [:]
     ) {
+      if root == nil { root = element }
       text = ""
       if element == "item" {
         guard let id = attributes["id"].flatMap(Int.init), id > 0 else { return }

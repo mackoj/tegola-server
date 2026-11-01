@@ -1,12 +1,16 @@
 import Foundation
+import MusicBrainzAPI
+import OpenAPIRuntime
 
-/// Music from MusicBrainz (D-22): barcode and words, no key. MusicBrainz asks for a User-Agent naming the
-/// application and a contact, and at most one request a second; the connection's pacer keeps to it.
-/// Its data is CC0. Releases are `musicbrainz:release:<mbid>`, works are `musicbrainz:release-group:<mbid>`.
-struct MusicBrainzSource: CatalogueSource {
-  let connection: SourceConnection
-  let userAgent: String
-  let base = URL(string: "https://musicbrainz.org/ws/2/")!
+/// Music from MusicBrainz (D-22), through the client generated from `api/sources/musicbrainz.openapi.yaml` (D-23):
+/// barcode and words, no key. MusicBrainz asks for a User-Agent naming the application and a contact, and at most
+/// one request a second; the connection's pacer keeps to it. Its data is CC0.
+/// Releases are `musicbrainz:release:<mbid>`, works are `musicbrainz:release-group:<mbid>`.
+struct MusicBrainzSupplier: DataSupplier {
+  typealias Release = MusicBrainzAPI.Components.Schemas.Release
+
+  let connection: SupplierConnection
+  let client: MusicBrainzAPI.Client
 
   let name = "musicbrainz"
   let typeID = "music"
@@ -19,10 +23,19 @@ struct MusicBrainzSource: CatalogueSource {
     attribution: "Data from MusicBrainz (CC0)"
   )
 
-  func barcode(_ query: BarcodeQuery) async throws(SourceFailure) -> [Components.Schemas.Candidate] {
+  init(connection: SupplierConnection, userAgent: String) {
+    self.connection = connection
+    self.client = MusicBrainzAPI.Client(
+      serverURL: try! MusicBrainzAPI.Servers.Server1.url(),
+      transport: SupplierTransport(connection: connection),
+      middlewares: [HeadersMiddleware { ["User-Agent": userAgent] }]
+    )
+  }
+
+  func barcode(_ query: BarcodeQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] {
     let code = query.code.filter(\.isNumber)
     guard !code.isEmpty else { return [] }
-    let releases = try await releases(lucene: "barcode:\(code)", limit: 10)
+    let releases = try await releases(.init(query: "barcode:\(code)", fmt: .json, limit: 10))
     return releases.compactMap { release in
       // The index matches loosely; only an exact barcode counts as a barcode match.
       guard release.barcode?.filter(\.isNumber) == code else { return nil }
@@ -31,24 +44,26 @@ struct MusicBrainzSource: CatalogueSource {
     }
   }
 
-  func search(_ query: SourceQuery) async throws(SourceFailure) -> [Components.Schemas.Candidate] {
+  func search(_ query: SupplierQuery) async throws(SupplierFailure) -> [Components.Schemas.Candidate] {
     var clauses: [String] = []
     if !query.title.isEmpty { clauses.append("release:(\(Self.escape(query.title)))") }
     if let artist = query.subtitle, !artist.isEmpty { clauses.append("artist:(\(Self.escape(artist)))") }
     if let catalogueNumber = query.catalogueNumber, !catalogueNumber.isEmpty {
       clauses.append("catno:\"\(Self.escape(catalogueNumber))\"")
     }
-    if let year = query.year { clauses.append("date:\(year)") }
+    if let year = query.year, TextMatch.years.contains(year) { clauses.append("date:\(year)") }
     if let format = query.subtype.flatMap(Self.format(forSubtype:)) { clauses.append("format:\(format)") }
     guard !clauses.isEmpty else { return [] }
-    let releases = try await releases(lucene: clauses.joined(separator: " AND "), limit: min(25, query.limit * 3))
+    let releases = try await releases(
+      .init(query: clauses.joined(separator: " AND "), fmt: .json, limit: min(25, query.limit * 3))
+    )
     return releases.compactMap { release in
       let year = TextMatch.year(release.date)
       var reasons: [Components.Schemas.Reason] = [.init(kind: query.reason)]
       var confidence: Double
       if query.title.isEmpty {
         // A catalogue number alone: MusicBrainz's own score is all we have.
-        confidence = Double(release.score ?? 0) / 100 * 0.9
+        confidence = Double(min(max(release.score ?? 0, 0), 100)) / 100 * 0.9
       } else {
         confidence = TextMatch.confidence(
           title: query.title,
@@ -71,22 +86,18 @@ struct MusicBrainzSource: CatalogueSource {
     }
   }
 
-  func work(id: String) async throws(SourceFailure) -> Components.Schemas.Work? {
+  func work(id: String) async throws(SupplierFailure) -> Components.Schemas.Work? {
     let prefix = "musicbrainz:release-group:"
     guard id.hasPrefix(prefix), let mbid = Self.mbid(String(id.dropFirst(prefix.count))) else { return nil }
-    var components = URLComponents(url: base.appendingPathComponent("release"), resolvingAgainstBaseURL: false)!
-    components.queryItems = [
-      .init(name: "release-group", value: mbid), .init(name: "inc", value: "release-groups media artist-credits"),
-      .init(name: "fmt", value: "json"), .init(name: "limit", value: "100"),
-    ]
-    guard let data = try await connection.send(request(components.url!)) else { return nil }
-    let page = try connection.decode(ReleaseList.self, from: data)
-    guard let first = page.releases.first else { return nil }
+    let releases = try await releases(
+      .init(releaseGroup: mbid, inc: "release-groups media artist-credits", fmt: .json, limit: 100)
+    )
+    guard let first = releases.first else { return nil }
     let title = TextMatch.clean(first.releaseGroup?.title ?? first.title) ?? first.title
     return .init(
       workID: id,
       title: title,
-      releases: page.releases.compactMap { release in
+      releases: releases.compactMap { release in
         guard let releaseID = Self.mbid(release.id) else { return nil }
         return .init(
           releaseID: "musicbrainz:release:\(releaseID)",
@@ -101,18 +112,15 @@ struct MusicBrainzSource: CatalogueSource {
 
   // MARK: - requests
 
-  private func releases(lucene: String, limit: Int) async throws(SourceFailure) -> [Release] {
-    var components = URLComponents(url: base.appendingPathComponent("release"), resolvingAgainstBaseURL: false)!
-    components.queryItems = [
-      .init(name: "query", value: lucene), .init(name: "fmt", value: "json"),
-      .init(name: "limit", value: String(max(1, min(limit, 25)))),
-    ]
-    guard let data = try await connection.send(request(components.url!)) else { return [] }
-    return try connection.decode(ReleaseList.self, from: data).releases
-  }
-
-  private func request(_ url: URL) -> OutboundRequest {
-    OutboundRequest(url: url, headers: ["User-Agent": userAgent, "Accept": "application/json"])
+  private func releases(_ query: MusicBrainzAPI.Operations.Releases.Input.Query) async throws(SupplierFailure)
+    -> [Release]
+  {
+    let output = try await connection.call { try await client.releases(query: query) }
+    switch output {
+    case .ok(let ok): return try await connection.decoded { try ok.body.json.releases }
+    case .notFound: return []
+    case .undocumented(let status, _): throw .failed("http-\(status / 100)xx")
+    }
   }
 
   private func candidate(
@@ -161,22 +169,32 @@ struct MusicBrainzSource: CatalogueSource {
     return credits.map { ($0.name ?? $0.artist?.name ?? "") + ($0.joinphrase ?? "") }.joined()
   }
 
+  /// MusicBrainz's format names per medium (musicbrainz.org/doc/Release/Format); anything else is Other.
+  static let vinylFormats: Set<String> = ["Vinyl", "7\" Vinyl", "10\" Vinyl", "12\" Vinyl", "Flexi-disc"]
+  static let cdFormats: Set<String> = [
+    "CD", "Enhanced CD", "HDCD", "SHM-CD", "Blu-spec CD", "Copy Control CD", "Data CD", "CD-R", "8cm CD", "Hybrid SACD",
+    "SACD",
+  ]
+  static let cassetteFormats: Set<String> = ["Cassette", "Microcassette"]
+
   /// The type file's `medium` choice: Vinyl, CD, Cassette or Other.
   static func medium(_ release: Release) -> String {
     let formats = (release.media ?? []).compactMap(\.format)
     if formats.isEmpty { return "Other" }
-    if formats.allSatisfy({ $0.contains("Vinyl") }) { return "Vinyl" }
-    if formats.allSatisfy({ $0.contains("CD") }) { return "CD" }
-    if formats.allSatisfy({ $0.contains("Cassette") }) { return "Cassette" }
+    if formats.allSatisfy(vinylFormats.contains) { return "Vinyl" }
+    if formats.allSatisfy(cdFormats.contains) { return "CD" }
+    if formats.allSatisfy(cassetteFormats.contains) { return "Cassette" }
     return "Other"
   }
 
+  /// The subtype, when the release lists its media: an unknown medium is no subtype.
   static func subtype(_ release: Release) -> String? {
+    guard release.media?.contains(where: { $0.format != nil }) == true else { return nil }
     switch medium(release) {
-    case "Vinyl": "vinyl"
-    case "CD": "cd"
-    case "Cassette": "cassette"
-    default: release.media?.isEmpty == false ? "other" : nil
+    case "Vinyl": return "vinyl"
+    case "CD": return "cd"
+    case "Cassette": return "cassette"
+    default: return "other"
     }
   }
 
@@ -191,7 +209,8 @@ struct MusicBrainzSource: CatalogueSource {
       let formats = Set(media.compactMap(\.format))
       if formats == ["7\" Vinyl"] { return count == 1 ? "7\"" : nil }
       if formats == ["10\" Vinyl"] { return count == 1 ? "10\"" : nil }
-      if formats.isSubset(of: ["12\" Vinyl", "Vinyl"]) { return count == 1 ? "LP" : count == 2 ? "2×LP" : nil }
+      // Two 12-inch discs is a double LP; one could be an LP or a 12" single, so it's left to the collector.
+      if formats.isSubset(of: ["12\" Vinyl", "Vinyl"]), count == 2 { return "2×LP" }
       return nil
     default: return nil
     }
@@ -213,7 +232,11 @@ struct MusicBrainzSource: CatalogueSource {
     ]
     var escaped = ""
     for character in text.prefix(300) {
-      if character.isNewline { escaped.append(" "); continue }
+      // Any whitespace (tabs, ideographic spaces, newlines) becomes a plain space, so the words split below.
+      if character.isWhitespace {
+        escaped.append(" ")
+        continue
+      }
       if special.contains(character) { escaped.append("\\") }
       escaped.append(character)
     }
@@ -221,64 +244,5 @@ struct MusicBrainzSource: CatalogueSource {
     return escaped.split(separator: " ", omittingEmptySubsequences: true)
       .map { ["AND", "OR", "NOT"].contains($0) ? $0.lowercased() : String($0) }
       .joined(separator: " ")
-  }
-
-  // MARK: - wire
-
-  struct ReleaseList: Decodable {
-    var releases: [Release]
-  }
-
-  struct Release: Decodable {
-    var id: String
-    var score: Int?
-    var title: String
-    var date: String?
-    var country: String?
-    var barcode: String?
-    var artistCredit: [ArtistCredit]?
-    var releaseGroup: ReleaseGroup?
-    var labelInfo: [LabelInfo]?
-    var media: [Medium]?
-
-    enum CodingKeys: String, CodingKey {
-      case id, score, title, date, country, barcode, media
-      case artistCredit = "artist-credit"
-      case releaseGroup = "release-group"
-      case labelInfo = "label-info"
-    }
-  }
-
-  struct ArtistCredit: Decodable {
-    var name: String?
-    var joinphrase: String?
-    var artist: Artist?
-  }
-
-  struct Artist: Decodable {
-    var name: String?
-  }
-
-  struct ReleaseGroup: Decodable {
-    var id: String?
-    var title: String?
-  }
-
-  struct LabelInfo: Decodable {
-    var catalogNumber: String?
-    var label: Label?
-
-    enum CodingKeys: String, CodingKey {
-      case label
-      case catalogNumber = "catalog-number"
-    }
-  }
-
-  struct Label: Decodable {
-    var name: String?
-  }
-
-  struct Medium: Decodable {
-    var format: String?
   }
 }

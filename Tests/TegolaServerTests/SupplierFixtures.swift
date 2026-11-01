@@ -3,7 +3,7 @@ import Logging
 
 @testable import TegolaServer
 
-// Source answers for the tests (D-22). Written by hand from each provider's documented response format, because
+// Supplier answers for the tests (D-22, D-23). Written by hand from each provider's documented response format, because
 // this sandbox can't reach the providers; trimmed to the fields the sources read, plus a few they must ignore.
 // Re-record them from the live APIs when a key is at hand (docs/milestones/M3.md).
 
@@ -52,8 +52,9 @@ func status(_ code: Int, headers: [String: String] = [:]) -> OutboundResponse {
 }
 
 /// A connection with no pause between requests, for tests.
-func testConnection(_ name: String, _ transport: any HTTPTransport, logger: Logger = quietLogger) -> SourceConnection {
-  SourceConnection(name: name, transport: transport, interval: .zero, logger: logger)
+func testConnection(_ name: String, _ transport: any HTTPTransport, logger: Logger = quietLogger) -> SupplierConnection
+{
+  SupplierConnection(name: name, transport: transport, interval: .zero, logger: logger)
 }
 
 let quietLogger: Logger = {
@@ -190,10 +191,4 @@ enum Fixture {
     </items>
     """
 
-  /// An answer that tries to read a local file through an external entity.
-  static let bggExternalEntity = """
-    <?xml version="1.0"?>
-    <!DOCTYPE items [<!ENTITY xxe SYSTEM "file:///etc/hostname">]>
-    <items><item type="boardgame" id="1"><name type="primary" value="&xxe;"/></item></items>
-    """
 }

@@ -1,0 +1,91 @@
+openapi: 3.1.0
+info:
+  title: ScreenScraper API v2 (the part tegola-server uses)
+  version: "2"
+  description: |
+    Written by tegola-server (D-23): ScreenScraper publishes no OpenAPI description. Source:
+    https://www.screenscraper.fr/webapi2.php. Credentials are query parameters by the API's design: these URLs are
+    never logged, and the media URLs in answers (which embed them) are never passed on. Statuses 423 (API closed),
+    430 (daily quota) and 431 (too many unknown requests) mean "come back later".
+servers:
+  - url: https://api.screenscraper.fr/api2
+components:
+  parameters:
+    devid: { name: devid, in: query, required: true, schema: { type: string } }
+    devpassword: { name: devpassword, in: query, required: true, schema: { type: string } }
+    softname: { name: softname, in: query, required: true, schema: { type: string } }
+    output: { name: output, in: query, required: true, schema: { type: string, enum: [json] } }
+    ssid: { name: ssid, in: query, schema: { type: string } }
+    sspassword: { name: sspassword, in: query, schema: { type: string } }
+  schemas:
+    Game:
+      type: object
+      properties:
+        id: { type: string }
+        noms: { type: array, items: { $ref: "#/components/schemas/Regional" } }
+        systeme: { $ref: "#/components/schemas/Named" }
+        editeur: { $ref: "#/components/schemas/Named" }
+        dates: { type: array, items: { $ref: "#/components/schemas/Regional" } }
+    Regional:
+      type: object
+      properties:
+        region: { type: string }
+        text: { type: string }
+    Named:
+      type: object
+      properties:
+        id: { type: string }
+        text: { type: string }
+paths:
+  /jeuRecherche.php:
+    get:
+      operationId: search
+      parameters:
+        - $ref: "#/components/parameters/devid"
+        - $ref: "#/components/parameters/devpassword"
+        - $ref: "#/components/parameters/softname"
+        - $ref: "#/components/parameters/output"
+        - $ref: "#/components/parameters/ssid"
+        - $ref: "#/components/parameters/sspassword"
+        - { name: recherche, in: query, required: true, schema: { type: string } }
+        - { name: systemeid, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: Games. An empty search answers `[{}]`.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [response]
+                properties:
+                  response:
+                    type: object
+                    required: [jeux]
+                    properties:
+                      jeux: { type: array, items: { $ref: "#/components/schemas/Game" } }
+  /jeuInfos.php:
+    get:
+      operationId: game
+      parameters:
+        - $ref: "#/components/parameters/devid"
+        - $ref: "#/components/parameters/devpassword"
+        - $ref: "#/components/parameters/softname"
+        - $ref: "#/components/parameters/output"
+        - $ref: "#/components/parameters/ssid"
+        - $ref: "#/components/parameters/sspassword"
+        - { name: gameid, in: query, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: One game.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [response]
+                properties:
+                  response:
+                    type: object
+                    required: [jeu]
+                    properties:
+                      jeu: { $ref: "#/components/schemas/Game" }
+        "404": { description: No such game. }

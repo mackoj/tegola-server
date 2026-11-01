@@ -139,7 +139,7 @@ public struct SourceSettings: Sendable, Equatable, CustomStringConvertible {
   /// BoardGameGeek's XML API bearer token.
   public var boardGameGeekToken: String?
 
-  public struct ClientCredentials: Sendable, Equatable {
+  public struct ClientCredentials: Sendable, Equatable, CustomStringConvertible {
     public var id: String
     public var secret: String
 
@@ -147,9 +147,12 @@ public struct SourceSettings: Sendable, Equatable, CustomStringConvertible {
       self.id = id
       self.secret = secret
     }
+
+    /// Never the secret, should it ever be logged.
+    public var description: String { "ClientCredentials(id, secret)" }
   }
 
-  public struct ScreenScraperSettings: Sendable, Equatable {
+  public struct ScreenScraperSettings: Sendable, Equatable, CustomStringConvertible {
     public var developerID: String
     public var developerPassword: String
     /// A member account raises the quota; optional, both or neither.
@@ -162,6 +165,9 @@ public struct SourceSettings: Sendable, Equatable, CustomStringConvertible {
       self.user = user
       self.password = password
     }
+
+    /// Never a password, should it ever be logged.
+    public var description: String { "ScreenScraperSettings(developer, \(user == nil ? "no member" : "member"))" }
   }
 
   public init(
