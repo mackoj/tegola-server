@@ -3,16 +3,13 @@
 The state of the work for whoever picks it up next: a new session, another agent, or the owner. Read this first, keep
 it short and current.
 
-**Updated:** 2026-11-01. M1 to M3 are merged (PRs #1–#13). **Contract 0.2.0** (tegola D-71) is synced on
-`claude/tegola-hummingbird-bff-9ad714`: `identifyObject` (`POST /types/{type}/identify`, JSON hints or a multipart
-photo and hints) replaces `searchObjects` (D-24). The photo is size-checked, JPEG-checked and dropped: no source
-matches images yet.
+**Updated:** 2026-11-01. M1 to M3 are merged (PRs #1–#13), and so is **contract 0.2.0** (tegola D-71, PR #14):
+`identifyObject` (`POST /types/{type}/identify`, JSON hints or a multipart photo and hints) replaces `searchObjects`
+(D-24). The photo is size-checked, JPEG-checked and dropped: no source matches images yet.
 
 ## Resume here (in this order)
 
-1. **Contract 0.2.0's PR** (this branch), if it isn't merged yet: green `linux` and `docker`, then merge. tegola's
-   HANDOFF says the server must sync 0.2.0; once merged, that line there can go.
-2. **Owner, keys:** register the suppliers' keys (`deploy/env.example`, "Lookup sources"): a MusicBrainz contact, a
+1. **Owner, keys:** register the suppliers' keys (`deploy/env.example`, "Lookup sources"): a MusicBrainz contact, a
    Twitch application for IGDB, a ScreenScraper developer account, a BoardGameGeek XML API token. Then, with the
    keys, re-record `Tests/TegolaServerTests/SupplierFixtures.swift` from the live APIs: they're hand-written from the
    documented formats, since this sandbox can't reach the providers. Check in particular:
@@ -20,18 +17,18 @@ matches images yet.
    - IGDB's `release_region`;
    - ScreenScraper's system ids;
    - BGG's bearer token.
-3. **Adding a supplier:** write (or fetch) its description in `api/sources/`, add a `<Name>API` target in
+2. **Adding a supplier:** write (or fetch) its description in `api/sources/`, add a `<Name>API` target in
    `Package.swift` (copy an existing one), and conform a type to `DataSupplier` in `Sources/TegolaServer/Suppliers/`.
    Then wire it in `SupplierFactory.swift` and `SourceSettings`, and add tests with fixtures that carry the real
    Content-Type.
-4. **Dependabot PRs**, weekly: merge one only once both `linux` and `docker` are green (the `docker` job takes about
+3. **Dependabot PRs**, weekly: merge one only once both `linux` and `docker` are green (the `docker` job takes about
    ten minutes; #8 was merged before it failed). An image bump that touches the Dockerfile's `swift` or Compose's
    `postgres` fails `pins` until CI's copy in `.github/workflows/ci.yml` carries the same digest: move it in the same
    PR. A Postgres major bump needs the upgrade step in D-21 once a deployment exists.
-5. **Owner answers**, deferred until release: hosting and domain, Team ID, shared caches (PLAN §9; persistence and
+4. **Owner answers**, deferred until release: hosting and domain, Team ID, shared caches (PLAN §9; persistence and
    sources are answered, D-17, D-22). `docs/DEPLOY.md` says where each answer goes.
-6. **M4, production**, paced by tegola's M6 (the app's lookup client).
-7. **Open options:**
+5. **M4, production**, paced by tegola's M6 (the app's lookup client).
+6. **Open options:**
    - an image source for Identify, per type (D-24 says where it plugs in, and what PD-118 asks of it);
    - cover art for music (Cover Art Archive);
    - a supplier cache and rate limits shared by several instances (D-9);
