@@ -41,7 +41,7 @@ jobs:
           TEGOLA_DIR: tegola
           TEGOLA_TEST_DATABASE_URL: postgres://tegola:tegola-ci@postgres:5432/tegola_test?sslmode=disable
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE" && scripts/ci.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: ci-logs
@@ -55,7 +55,7 @@ jobs:
           persist-credentials: false
       - name: Image and stack smoke test
         run: scripts/docker-smoke.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: docker-logs
