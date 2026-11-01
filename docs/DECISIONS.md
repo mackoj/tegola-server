@@ -336,7 +336,7 @@ punctuation, `&` and a leading article, by character bigrams, so word order and 
 buckets then apply to imports unchanged. OCR text searches its first three lines, with the reason `ocr`.
 
 **How every source behaves.**
-- **One connection each** (`SourceConnection`): a pacer keeps the provider's rate across all requests, and refuses a
+- **One connection each** (`SupplierConnection`, D-23): a pacer keeps the provider's rate across all requests, and refuses a
   request that would wait more than 10 s (12 s for BGG) with `Retry-After` instead of queueing it. A breaker opens
   for 30 s after five failures in a row. Requests time out at 8 s; answers are capped at 2 MB.
 - **Failures are 503 with `Retry-After`**, never an empty answer that would read as "no match". A provider's 429 or
@@ -369,3 +369,38 @@ providers. They should be re-recorded from the live APIs once the keys exist.
 
 **Left for later.** Cover art for music (the Cover Art Archive, one more request per release, at MusicBrainz's pace).
 A cache shared by several instances, with the shared rate limits (D-9).
+
+### D-23 · Every supplier has an OpenAPI description; one protocol for any supplier
+
+**Direction.** The owner, 2026-11-01: "each data source should have an openapi file that we either create ourself or
+that is from our data supplier", and "one protocol that will represent any data supplier abstractly".
+
+**Decision.**
+- **One description per supplier**, in `api/sources/`: `musicbrainz`, `twitch` (IGDB's token), `igdb`,
+  `screenscraper`, `boardgamegeek`. None of these publishes an OpenAPI description (checked against their docs:
+  MusicBrainz WS/2, IGDB v4, Twitch OAuth, ScreenScraper api2, BGG XML API 2), so all five are ours. Each one carries
+  its source and the provider's terms, and holds only the operations and fields the server reads. A supplier that
+  later publishes its own replaces ours.
+- **One generated client per supplier**, each in its own target (`Sources/<Name>API/`, the description linked in,
+  `generate: [types, client]`), because the generator takes one document per target. The clients stay internal to the
+  package.
+- **`DataSupplier`** (was `CatalogueSource`) is the one protocol for any supplier: name, type, id prefix, whether it
+  has a barcode index, and `barcode`, `search` and `work`, which return the contract's candidates and works or a
+  `SupplierFailure`. Everything specific to a supplier stays behind it: its client, its key, its query language, its
+  answer's shape. The composite is `SuppliersLookupService`; the code is in `Sources/TegolaServer/Suppliers/`.
+- **Every client sends through `SupplierTransport`**, a `ClientTransport` over `SupplierConnection`, so the generated
+  code gets D-22's pace, breaker, timeout and size cap. Tests still replay fixtures through `HTTPTransport`. Keys and
+  tokens go through `HeadersMiddleware`, since OpenAPI ignores an `Authorization` header parameter. ScreenScraper's
+  credentials are query parameters in its description, because that is its API.
+- **What the generator can't do:** BGG answers XML, which the client hands back raw. `BoardGameGeekSupplier` parses
+  it, requiring an `<items>` root and refusing any DOCTYPE or entity declaration.
+
+**The first review's findings** (`tasks/M3-review.md`), fixed with this change, each with a test:
+- **Years:** an import row's year must be 1800–2100, and the ranking ignores years outside that range. An extreme
+  year could overflow and stop the server.
+- **Failures:** a supplier failing beside an empty answer is 503, not "no match". Error pages are failures.
+- **Redirects** are refused, so no key follows one.
+- **Cache:** answers are cut to each supplier's best 10 before caching, keys are JSON, and the eviction is fixed.
+- **Imports** stop after 20 s.
+- **Twitch:** one token fetch is shared by concurrent first requests.
+- **Smaller fixes** to the escaping and the mappings.

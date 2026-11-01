@@ -54,6 +54,7 @@ The owner's choice (2026-11-01, D-22): MusicBrainz, IGDB + ScreenScraper, BoardG
 | T3.4 ScreenScraper | Words for `video-game`, regional titles, no media URLs | `ScreenScraperTests` |
 | T3.5 BoardGameGeek | Words for `board-games`, XML without external entities | `BoardGameGeekTests` |
 | T3.6 Configuration | One opt-in per source, pairs or nothing, values never logged | `SourceSettingsTests` |
+| T3.8 OpenAPI per supplier | `api/sources/*.openapi.yaml`, a generated client per supplier, `DataSupplier`, `SupplierTransport` (D-23) | `SupplierTests` through the generated clients |
 | T3.7 Docs | D-22; PLAN §4, §9; README, DEPLOY, env.example; `docs/milestones/M3.md` | Read-through |
 
 Left for later: re-recording the fixtures against the live APIs once keys exist; cover art for music (one more

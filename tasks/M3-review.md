@@ -1,9 +1,12 @@
-# M3 review findings (to fix)
+# M3 reviews
 
-From a separate review agent over `a810cc2`, read-only (no builds, no network), 2026-11-01. Not yet verified against
-the code or fixed. Line numbers are at `a810cc2`. Fix them during or after the OpenAPI restructure (HANDOFF item 1),
-each with a test that sends the attack or the failure; then tick them off here and fold the outcome into D-22 and
-`docs/milestones/M3.md`.
+## First review: fixed
+
+From a separate review agent over `a810cc2`, read-only (no builds, no network), 2026-11-01. Line numbers are at
+`a810cc2`. **Status: all fixed in `0f1665d`, with the OpenAPI restructure (D-23).** Each fix has a test in
+`SupplierReviewTests` (`Tests/TegolaServerTests/SupplierTests.swift`) that sends the attack or the failure. The
+batch deadline (finding 7) is the exception: 20 seconds is too long for a unit test, and it's a plain clock check in
+`LookupAPI.matchBatch`. Kept below as found.
 
 ## Critical
 
@@ -83,3 +86,7 @@ each with a test that sends the attack or the failure; then tick them off here a
 - **Logs:** reason codes only.
 - **Contract shape:** confidence clamped, at least one reason and one source on every candidate.
 - **Provider formats:** IGDB regions, ScreenScraper system ids, BGG endpoints and its bearer token.
+
+## Second review
+
+Over the whole milestone (`origin/main...HEAD`) after the fixes: see below once it reports.
