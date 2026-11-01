@@ -91,11 +91,10 @@ if [[ "${1:-}" != "image" ]]; then
     check "stack: nothing outside /v1" "404" "$(https -o /dev/null -w '%{http_code}' https://localhost/admin)"
     check "stack: HTTP redirects to HTTPS" "308" \
       "$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' http://127.0.0.1/v1/health -H 'Host: localhost')"
-    # `compose port` prints ":0" for a port that isn't published.
-    published=$(compose port tegola-server 8080 2>/dev/null)
-    check "stack: server port not published" "" "${published#:0}"
-    published=$(compose port postgres 5432 2>/dev/null)
-    check "stack: Postgres port not published" "" "${published#:0}"
+    # `docker port` prints one line per host binding, nothing for a port that isn't published. (`compose port`'s
+    # answer for an unpublished port changed between Compose versions: ":0", then "invalid IP:0".)
+    check "stack: server port not published" "" "$(docker port "$(compose ps -q tegola-server)" 8080 2>/dev/null)"
+    check "stack: Postgres port not published" "" "$(docker port "$(compose ps -q postgres)" 5432 2>/dev/null)"
     check "stack: schema migrated" "1" \
       "$(compose exec -T postgres sh -c 'PGPASSWORD=$POSTGRES_PASSWORD psql -h 127.0.0.1 -U tegola -d tegola -tAc \
         "SELECT max(version) FROM tegola_schema_migrations"' 2>/dev/null)"

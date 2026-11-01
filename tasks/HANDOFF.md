@@ -85,6 +85,11 @@ TEGOLA_ENVIRONMENT=development TEGOLA_APP_ID=ABCDE12345.fr.macko.tegola \
   the compiler lists what to implement. Never edit `api/` here alone.
 - **Generated code** is in `.build/plugins/outputs/…/OpenAPIGenerator/GeneratedSources/` after a build: read
   `Types+Operations.swift` for the shapes a handler returns.
+- **Gotchas found while pinning (D-20, D-21):** Postgres 18 keeps its data in `/var/lib/postgresql/18/docker` and
+  refuses a volume on the old `/data` path. `docker compose port` changed its answer for an unpublished port (":0",
+  then "invalid IP:0"): the smoke test asks `docker port` instead. Compose carries anonymous volumes over on
+  `--force-recreate`, so only `down` and `up` proves data is in the named volume. Run the disk dry and Docker builds
+  fail half-way: `docker builder prune -af` and deleting a stale `.build` free most of it.
 - **Gotchas found in the review:** Hummingbird's router ignores empty path segments, so never choose behaviour by
   path prefix: use the operation id. A `.build` copied from another checkout fails on stale module caches: delete
   `.build/out` and `.build/plugins`, keep `.build/checkouts`. A wrong database password isn't fatal to PostgresNIO,
