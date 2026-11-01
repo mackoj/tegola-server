@@ -46,7 +46,7 @@ Plan: `tasks/plan.md`, M3. Report: `docs/milestones/M3.md`. Sources chosen by th
   `DataSupplier` protocol (owner, 2026-11-01; D-23)
 - [x] The first review's findings fixed, each with a test (`tasks/M3-review.md`)
 - [x] Docker smoke test with the new dependency, recorded in the report (needed `libxml2` in the image)
-- [ ] Separate review agent over M3
+- [x] Separate review agents over M3: two rounds, every finding fixed (`tasks/M3-review.md`)
 - [ ] Owner: register the keys (D-22); then re-record the fixtures from the live APIs
 
 ## Open follow-ups

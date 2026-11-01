@@ -396,11 +396,24 @@ that is from our data supplier", and "one protocol that will represent any data 
   it, requiring an `<items>` root and refusing any DOCTYPE or entity declaration.
 
 **The first review's findings** (`tasks/M3-review.md`), fixed with this change, each with a test:
-- **Years:** an import row's year must be 1800–2100, and the ranking ignores years outside that range. An extreme
-  year could overflow and stop the server.
+- **Years:** the ranking only compares years from 1800 to 2100, and an import row's year outside that range is
+  dropped. The contract gives it no range, so the row is still answered. An extreme year could overflow and stop
+  the server.
 - **Failures:** a supplier failing beside an empty answer is 503, not "no match". Error pages are failures.
 - **Redirects** are refused, so no key follows one.
 - **Cache:** answers are cut to each supplier's best 10 before caching, keys are JSON, and the eviction is fixed.
 - **Imports** stop after 20 s.
 - **Twitch:** one token fetch is shared by concurrent first requests.
 - **Smaller fixes** to the escaping and the mappings.
+
+**The second review's findings**, over the whole milestone (`tasks/M3-review.md`), fixed with a test each:
+- **Content types:** BGG labels its XML `text/xml`, which the description now declares beside `application/xml`.
+  Fixtures carry each provider's Content-Type, because the generated clients refuse one their description doesn't
+  declare.
+- **Time:** the whole exchange, body included, is bounded by the 8 s timeout.
+- **Busy providers:** a provider that said "busy" is left alone until its `Retry-After`.
+- **Breaker:** an answer too large for one query doesn't count towards it, and once it's half open, only one probe
+  goes through.
+- **BGG:** answers must be UTF-8 without NULs before the declaration check.
+- **Twitch:** a fresh token IGDB refuses isn't fetched again.
+- **MusicBrainz:** the year and subtype rank and filter locally instead of in its index.

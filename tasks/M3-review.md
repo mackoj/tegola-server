@@ -87,6 +87,32 @@ batch deadline (finding 7) is the exception: 20 seconds is too long for a unit t
 - **Contract shape:** confidence clamped, at least one reason and one source on every candidate.
 - **Provider formats:** IGDB regions, ScreenScraper system ids, BGG endpoints and its bearer token.
 
-## Second review
+## Second review: fixed
 
-Over the whole milestone (`origin/main...HEAD`) after the fixes: see below once it reports.
+From a second separate review agent over the whole milestone (`origin/main...HEAD` at `dfe8e69`), read-only,
+2026-11-01. It confirmed that every first-review fix holds, and found nothing critical. All fixed in `42e5640`, each
+with a test in `SupplierSecondReviewTests`, unless noted.
+
+- **High:**
+  1. **BGG answers `text/xml`, and its description declared only `application/xml`.** The generated client would
+     have refused every answer. Fixed: both types declared, and the fixtures carry each provider's real
+     Content-Type.
+- **Medium:**
+  2. **Reading the body had no timeout.** Fixed: the whole exchange is raced against the timeout, and AHC gets
+     connect and read timeouts.
+  3. **"Busy" wasn't remembered.** Fixed: the supplier is skipped until its `Retry-After`.
+  4. **An answer too large for one query opened the breaker for everyone.** Fixed: `too-large` doesn't count.
+  5. **The year fix refused a whole batch over one row.** Fixed: the year is dropped instead.
+- **Low:**
+  6. **The batch deadline was checked between rows only.** Each row is now bounded by the pace wait plus the
+     timeout. No test.
+  7. **A DOCTYPE in UTF-16 got past the check.** Fixed: answers must be UTF-8 without NULs first.
+  8. **A finished Twitch fetch could clear a newer one.** Fixed: a fetch clears only itself.
+  9. **IGDB re-fetched its token on every 401.** Fixed: not when the token is less than a minute old.
+  10. **The half-open breaker let everyone through.** Fixed: one probe.
+  11. **MusicBrainz's `date` and `format` were hard filters.** Fixed: they now rank and filter locally.
+- **Tests:**
+  - The fixtures now carry their Content-Type.
+  - The token test now overlaps its callers for real.
+  - The redirect test still only proves that `exchange` maps a 3xx to a failure. The AHC `.disallow` setting has no
+    test without a live HTTPS server: it's one line in `AsyncHTTPTransport`.
