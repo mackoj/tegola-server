@@ -1,0 +1,64 @@
+openapi: 3.1.0
+info:
+  title: IGDB API v4 (the part tegola-server uses)
+  version: "4"
+  description: |
+    Written by tegola-server (D-23): IGDB publishes no OpenAPI description. Source: https://api-docs.igdb.com.
+    Every endpoint takes a POST whose body is an Apicalypse query in text/plain. Requests carry `Client-ID` and
+    `Authorization: Bearer <token>` (Twitch client credentials); the server adds both in a client middleware, since
+    OpenAPI ignores an `Authorization` header parameter. Terms: four requests a second, attribution required.
+servers:
+  - url: https://api.igdb.com/v4
+paths:
+  /games:
+    post:
+      operationId: games
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema: { type: string }
+      responses:
+        "200":
+          description: Games.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Game" } }
+components:
+  schemas:
+    Game:
+      type: object
+      required: [id]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        first_release_date: { type: integer }
+        cover: { type: object, properties: { image_id: { type: string } } }
+        franchises: { type: array, items: { $ref: "#/components/schemas/Named" } }
+        collections: { type: array, items: { $ref: "#/components/schemas/Named" } }
+        involved_companies:
+          type: array
+          items:
+            type: object
+            properties:
+              company: { $ref: "#/components/schemas/Named" }
+              publisher: { type: boolean }
+        release_dates:
+          type: array
+          items:
+            type: object
+            properties:
+              y: { type: integer }
+              region: { type: integer, description: "Deprecated by IGDB in favour of release_region." }
+              release_region: { type: object, properties: { region: { type: string } } }
+              platform: { $ref: "#/components/schemas/Platform" }
+        platforms: { type: array, items: { $ref: "#/components/schemas/Platform" } }
+    Named:
+      type: object
+      properties:
+        name: { type: string }
+    Platform:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }

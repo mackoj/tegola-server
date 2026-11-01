@@ -33,7 +33,21 @@ Plan: `tasks/plan.md`, M2. Report: `docs/milestones/M2.md`.
 
 ## M3 · first sources
 
-Waits on the owner's choice of sources (PLAN §9, question 1).
+Plan: `tasks/plan.md`, M3. Report: `docs/milestones/M3.md`. Sources chosen by the owner on 2026-11-01 (D-22).
+
+- [x] T3.1 Infrastructure: transport, pace, breaker, timeouts, cache, composite
+- [x] T3.2 MusicBrainz (music: barcode and words)
+- [x] T3.3 IGDB (video games: words)
+- [x] T3.4 ScreenScraper (video games: words)
+- [x] T3.5 BoardGameGeek (board games: words)
+- [x] T3.6 Configuration
+- [x] T3.7 Docs and report
+- [x] T3.8 Each supplier described by an OpenAPI file (ours: none publishes one) with a generated client; one
+  `DataSupplier` protocol (owner, 2026-11-01; D-23)
+- [x] The first review's findings fixed, each with a test (`tasks/M3-review.md`)
+- [x] Docker smoke test with the new dependency, recorded in the report (needed `libxml2` in the image)
+- [x] Separate review agents over M3: two rounds, every finding fixed (`tasks/M3-review.md`)
+- [ ] Owner: register the keys (D-22); then re-record the fixtures from the live APIs
 
 ## Open follow-ups
 

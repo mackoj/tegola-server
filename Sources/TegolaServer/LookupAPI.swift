@@ -87,7 +87,12 @@ struct LookupAPI: APIProtocol {
     }
     do {
       var results: [Components.Schemas.MatchResult.ResultsPayloadPayload] = []
+      // A batch stops after 20 s: rows run one after another, each against a supplier's shared pace, so a long one
+      // would hold the request open and spend everyone's pace. The rows it reached are cached, so the app's retry
+      // after `Retry-After` goes further (D-22).
+      let deadline = ContinuousClock.now + .seconds(20)
       for item in request.items {
+        guard ContinuousClock.now < deadline else { throw SourceUnavailable(retryAfter: 5) }
         let candidates = try await lookups.match(typeID: input.path.typeID, item)
         let (bucket, kept) = Self.bucket(candidates)
         results.append(.init(ref: item.ref, bucket: bucket, candidates: kept))

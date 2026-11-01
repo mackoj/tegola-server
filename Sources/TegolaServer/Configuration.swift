@@ -25,6 +25,8 @@ public struct ServerConfiguration: Sendable {
   /// Postgres, from `TEGOLA_DATABASE_URL`. Required in production (D-17); without it a development server keeps keys
   /// and challenges in memory.
   public var database: DatabaseSettings?
+  /// Which lookup sources are on, with their keys (D-22). None by default: lookups answer "no match".
+  public var sources: SourceSettings
   public var limits: Limits
 
   public struct Limits: Sendable {
@@ -53,6 +55,7 @@ public struct ServerConfiguration: Sendable {
     debugToken: String? = nil,
     trustedProxyHops: Int = 0,
     database: DatabaseSettings? = nil,
+    sources: SourceSettings = SourceSettings(),
     limits: Limits = Limits()
   ) throws(ConfigurationError) {
     self.environment = environment
@@ -62,6 +65,7 @@ public struct ServerConfiguration: Sendable {
     self.debugToken = debugToken
     self.trustedProxyHops = trustedProxyHops
     self.database = database
+    self.sources = sources
     self.limits = limits
     try validate()
   }
@@ -99,7 +103,8 @@ public struct ServerConfiguration: Sendable {
       port: port ?? 8080,
       debugToken: env["TEGOLA_DEBUG_TOKEN"].flatMap { $0.isEmpty ? nil : $0 },
       trustedProxyHops: hops ?? 0,
-      database: database
+      database: database,
+      sources: try SourceSettings.load(from: env)
     )
   }
 
@@ -121,6 +126,111 @@ public struct ServerConfiguration: Sendable {
     case .production: [.production]
     case .development: [.production, .development]
     }
+  }
+}
+
+/// The lookup sources' settings (D-22). A source is on when its variables are set; a pair set by half, or a value
+/// with spaces or control characters, stops the server. Values are never logged: `description` names the sources.
+public struct SourceSettings: Sendable, Equatable, CustomStringConvertible {
+  /// MusicBrainz: a contact (a URL or an e-mail address) for the User-Agent its terms require. No key.
+  public var musicBrainzContact: String?
+  public var igdb: ClientCredentials?
+  public var screenScraper: ScreenScraperSettings?
+  /// BoardGameGeek's XML API bearer token.
+  public var boardGameGeekToken: String?
+
+  public struct ClientCredentials: Sendable, Equatable, CustomStringConvertible {
+    public var id: String
+    public var secret: String
+
+    public init(id: String, secret: String) {
+      self.id = id
+      self.secret = secret
+    }
+
+    /// Never the secret, should it ever be logged.
+    public var description: String { "ClientCredentials(id, secret)" }
+  }
+
+  public struct ScreenScraperSettings: Sendable, Equatable, CustomStringConvertible {
+    public var developerID: String
+    public var developerPassword: String
+    /// A member account raises the quota; optional, both or neither.
+    public var user: String?
+    public var password: String?
+
+    public init(developerID: String, developerPassword: String, user: String? = nil, password: String? = nil) {
+      self.developerID = developerID
+      self.developerPassword = developerPassword
+      self.user = user
+      self.password = password
+    }
+
+    /// Never a password, should it ever be logged.
+    public var description: String { "ScreenScraperSettings(developer, \(user == nil ? "no member" : "member"))" }
+  }
+
+  public init(
+    musicBrainzContact: String? = nil,
+    igdb: ClientCredentials? = nil,
+    screenScraper: ScreenScraperSettings? = nil,
+    boardGameGeekToken: String? = nil
+  ) {
+    self.musicBrainzContact = musicBrainzContact
+    self.igdb = igdb
+    self.screenScraper = screenScraper
+    self.boardGameGeekToken = boardGameGeekToken
+  }
+
+  public var isEmpty: Bool { enabled.isEmpty }
+
+  /// The sources that are on, by name.
+  public var enabled: [String] {
+    var names: [String] = []
+    if musicBrainzContact != nil { names.append("musicbrainz") }
+    if igdb != nil { names.append("igdb") }
+    if screenScraper != nil { names.append("screenscraper") }
+    if boardGameGeekToken != nil { names.append("boardgamegeek") }
+    return names
+  }
+
+  public var description: String { enabled.isEmpty ? "none" : enabled.joined(separator: ", ") }
+
+  static func load(from env: [String: String]) throws(ConfigurationError) -> SourceSettings {
+    func value(_ name: String) throws(ConfigurationError) -> String? {
+      guard let raw = env[name], !raw.isEmpty else { return nil }
+      guard raw.count <= 256, raw.unicodeScalars.allSatisfy({ $0.value > 0x20 && $0.value < 0x7F }) else {
+        throw .invalid("\(name) must be 1–256 printable characters without spaces")
+      }
+      return raw
+    }
+    func pair(_ first: String, _ second: String) throws(ConfigurationError) -> (String, String)? {
+      switch (try value(first), try value(second)) {
+      case (nil, nil): return nil
+      case (let a?, let b?): return (a, b)
+      default: throw .invalid("\(first) and \(second) go together: set both or neither")
+      }
+    }
+    var settings = SourceSettings()
+    settings.musicBrainzContact = try value("TEGOLA_MUSICBRAINZ_CONTACT")
+    if let (id, secret) = try pair("TEGOLA_IGDB_CLIENT_ID", "TEGOLA_IGDB_CLIENT_SECRET") {
+      settings.igdb = ClientCredentials(id: id, secret: secret)
+    }
+    let member = try pair("TEGOLA_SCREENSCRAPER_USER", "TEGOLA_SCREENSCRAPER_PASSWORD")
+    if let (id, password) = try pair("TEGOLA_SCREENSCRAPER_DEV_ID", "TEGOLA_SCREENSCRAPER_DEV_PASSWORD") {
+      settings.screenScraper = ScreenScraperSettings(
+        developerID: id,
+        developerPassword: password,
+        user: member?.0,
+        password: member?.1
+      )
+    } else if member != nil {
+      throw .invalid(
+        "TEGOLA_SCREENSCRAPER_USER needs TEGOLA_SCREENSCRAPER_DEV_ID and TEGOLA_SCREENSCRAPER_DEV_PASSWORD"
+      )
+    }
+    settings.boardGameGeekToken = try value("TEGOLA_BGG_TOKEN")
+    return settings
   }
 }
 

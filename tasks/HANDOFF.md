@@ -3,20 +3,38 @@
 The state of the work for whoever picks it up next: a new session, another agent, or the owner. Read this first, keep
 it short and current.
 
-**Updated:** 2026-11-01. M1, M2, the review's fixes (D-19), pinning (D-20) and Postgres 18 (D-21) are merged (PRs
-#1–#11). `main` is green (CI run 39), and no PR is open. Nothing more moves without the owner's answers (item 2).
+**Updated:** 2026-11-01. M1, M2, D-19 to D-21 are merged (PRs #1–#12). **M3 (suppliers) is done** on
+`claude/tegola-hummingbird-bff-9ad714`: four suppliers, each described by an OpenAPI file with a generated client,
+behind one `DataSupplier` protocol (D-22, D-23). Two separate reviews ran, and every finding is fixed with a test
+(`tasks/M3-review.md`). Report: `docs/milestones/M3.md`.
 
 ## Resume here (in this order)
 
-1. **Dependabot PRs**, weekly: merge one only once both `linux` and `docker` are green (the `docker` job takes about
+1. **M3's PR**, if it isn't merged yet: green `linux` and `docker`, then merge.
+2. **Owner, keys:** register the suppliers' keys (`deploy/env.example`, "Lookup sources"): a MusicBrainz contact, a
+   Twitch application for IGDB, a ScreenScraper developer account, a BoardGameGeek XML API token. Then, with the
+   keys, re-record `Tests/TegolaServerTests/SupplierFixtures.swift` from the live APIs: they're hand-written from the
+   documented formats, since this sandbox can't reach the providers. Check in particular:
+   - each answer's Content-Type (the generated clients refuse undeclared ones, D-23);
+   - IGDB's `release_region`;
+   - ScreenScraper's system ids;
+   - BGG's bearer token.
+3. **Adding a supplier:** write (or fetch) its description in `api/sources/`, add a `<Name>API` target in
+   `Package.swift` (copy an existing one), and conform a type to `DataSupplier` in `Sources/TegolaServer/Suppliers/`.
+   Then wire it in `SupplierFactory.swift` and `SourceSettings`, and add tests with fixtures that carry the real
+   Content-Type.
+4. **Dependabot PRs**, weekly: merge one only once both `linux` and `docker` are green (the `docker` job takes about
    ten minutes; #8 was merged before it failed). An image bump that touches the Dockerfile's `swift` or Compose's
    `postgres` fails `pins` until CI's copy in `.github/workflows/ci.yml` carries the same digest: move it in the same
    PR. A Postgres major bump needs the upgrade step in D-21 once a deployment exists.
-2. **Owner answers**, deferred until release: sources per type, hosting and domain, Team ID, shared caches (PLAN §9;
-   persistence is answered: Postgres, D-17). `docs/DEPLOY.md` says where each answer goes.
-3. **M3, sources** (once the owner picks them): one per launch type behind `LookupService`, with recorded-response
-   tests. `matchBatch` already charges one token per row (D-19).
-4. **M4, production**, paced by tegola's M6 (the app's lookup client).
+5. **Owner answers**, deferred until release: hosting and domain, Team ID, shared caches (PLAN §9; persistence and
+   sources are answered, D-17, D-22). `docs/DEPLOY.md` says where each answer goes.
+6. **M4, production**, paced by tegola's M6 (the app's lookup client).
+7. **Open options:**
+   - cover art for music (Cover Art Archive);
+   - a supplier cache and rate limits shared by several instances (D-9);
+   - an import batch that answers the rows it reached instead of 503 (a contract change, tegola first);
+   - a range for `MatchItem.year` in the contract (the server drops out-of-range years today).
 
 The owner's working style: carry on without asking. Use a worktree per task, branch, commit, push, open the PR, wait
 for green CI, merge. Stop only for decisions that are the owner's (PLAN §9). To keep the PR description free of the
@@ -25,10 +43,16 @@ update.
 
 ## Where things stand
 
-- **Spec:** `docs/PLAN.md`; decisions D-1 to D-21 in `docs/DECISIONS.md`.
+- **Spec:** `docs/PLAN.md`; decisions D-1 to D-23 in `docs/DECISIONS.md`.
 - **M1 (foundation):** the contract's seven operations served by Hummingbird 2 from generated code. App Attest
   registration and assertions are verified end to end, with every control of PLAN §5 and no lookup source yet (D-12).
   Report: `docs/milestones/M1.md`.
+- **M3 (suppliers):** MusicBrainz (music: barcode and words), IGDB + ScreenScraper (video games: words),
+  BoardGameGeek (board games: words), none for `thing`; the owner's choice (D-22). Each is described in
+  `api/sources/*.openapi.yaml` with a generated client (`Sources/<Name>API/`), conforms to `DataSupplier`
+  (`Sources/TegolaServer/Suppliers/`), and turns on with its environment variables. All clients send through
+  `SupplierTransport`, which applies pace, breaker, timeout, size cap and no redirects (D-23). Tests:
+  `SupplierTests.swift`, with fixtures in `SupplierFixtures.swift`.
 - **M2 (persistence):** keys and challenges in Postgres (`PostgresStore`), required in production. The Compose stack
   runs Postgres on an internal-only network. Report: `docs/milestones/M2.md`.
 - **Review (D-19):**
@@ -82,6 +106,15 @@ TEGOLA_ENVIRONMENT=development TEGOLA_APP_ID=ABCDE12345.fr.macko.tegola \
   the compiler lists what to implement. Never edit `api/` here alone.
 - **Generated code** is in `.build/plugins/outputs/…/OpenAPIGenerator/GeneratedSources/` after a build: read
   `Types+Operations.swift` for the shapes a handler returns.
+- **Gotchas found in M3:**
+  - swift-openapi-generator takes one document per target, so each supplier has its own target.
+  - Every module generates its own `Components`, `Operations` and `Client`: qualify them by module
+    (`MusicBrainzAPI.Operations`), or the server's own win.
+  - OpenAPI ignores an `Authorization` header parameter, so keys go through `HeadersMiddleware`.
+  - A generated client refuses an answer whose Content-Type its description doesn't declare: declare what the
+    provider really sends (BGG: `text/xml`).
+  - FoundationXML needs `libxml2` in the runtime image.
+  - `pkill -f <script>` also matches the shell that runs it.
 - **Gotchas found while pinning (D-20, D-21):** Postgres 18 keeps its data in `/var/lib/postgresql/18/docker` and
   refuses a volume on the old `/data` path. `docker compose port` changed its answer for an unpublished port (":0",
   then "invalid IP:0"): the smoke test asks `docker port` instead. Compose carries anonymous volumes over on

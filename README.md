@@ -78,6 +78,10 @@ log the reason first.
 | `TEGOLA_PORT` | `8080` | Listen port |
 | `TEGOLA_TRUSTED_PROXY_HOPS` | `0` | Reverse proxies that append to `X-Forwarded-For`; 0 ignores the header |
 | `TEGOLA_DATABASE_URL` | (required in production) | `postgres://user:password@host:5432/db?sslmode=verify-full` (`require`, or `disable` on a private network; `sslrootcert=/path` for a provider's CA). Without it, a development server keeps keys in memory |
+| `TEGOLA_MUSICBRAINZ_CONTACT` | unset | Turns music on (MusicBrainz): a contact URL or e-mail for its User-Agent |
+| `TEGOLA_IGDB_CLIENT_ID`, `TEGOLA_IGDB_CLIENT_SECRET` | unset | Turn IGDB on for video games: a Twitch application's credentials. Both or neither |
+| `TEGOLA_SCREENSCRAPER_DEV_ID`, `TEGOLA_SCREENSCRAPER_DEV_PASSWORD` | unset | Turn ScreenScraper on for video games. Both or neither; `TEGOLA_SCREENSCRAPER_USER` and `_PASSWORD` add a member's quota |
+| `TEGOLA_BGG_TOKEN` | unset | Turns board games on (BoardGameGeek XML API bearer token) |
 | `LOG_LEVEL` | `info` | swift-log level |
 
 ## Deploy

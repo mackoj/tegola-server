@@ -30,6 +30,7 @@ let package = Package(
     .package(url: "https://github.com/vapor/postgres-nio.git", "1.25.0"..<"2.0.0"),
     .package(url: "https://github.com/apple/swift-nio-ssl.git", "2.27.0"..<"3.0.0"),
     .package(url: "https://github.com/swift-server/swift-service-lifecycle.git", "2.6.0"..<"3.0.0"),
+    .package(url: "https://github.com/swift-server/async-http-client.git", "1.24.0"..<"2.0.0"),
   ],
   targets: [
     // App Attest verification: a strict CBOR reader, attestation (certificate chain to Apple's root, nonce, app id,
@@ -46,11 +47,16 @@ let package = Package(
     ),
     // The server: types and server stubs generated from api/tegola-lookup.openapi.yaml (a symlink here, so the
     // contract has one home in this repo; tegola's copy is the source, scripts/sync-contract.sh copies it), the
-    // handlers, the security middlewares, configuration and the in-memory stores.
+    // handlers, the security middlewares, configuration, the stores, and the lookup sources (PLAN §4, D-22).
     .target(
       name: "TegolaServer",
       dependencies: [
         "AppAttest",
+        "MusicBrainzAPI",
+        "TwitchAPI",
+        "IGDBAPI",
+        "ScreenScraperAPI",
+        "BoardGameGeekAPI",
         .product(name: "Hummingbird", package: "hummingbird"),
         .product(name: "OpenAPIRuntime", package: "swift-openapi-runtime"),
         .product(name: "OpenAPIHummingbird", package: "swift-openapi-hummingbird"),
@@ -61,7 +67,41 @@ let package = Package(
         .product(name: "PostgresNIO", package: "postgres-nio"),
         .product(name: "NIOSSL", package: "swift-nio-ssl"),
         .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
+        .product(name: "AsyncHTTPClient", package: "async-http-client"),
       ],
+      swiftSettings: swiftSettings,
+      plugins: [.plugin(name: "OpenAPIGenerator", package: "swift-openapi-generator")]
+    ),
+    // One generated client per data supplier, from its OpenAPI description in api/sources/ (written by us: none of
+    // them publishes one; D-23). The suppliers in TegolaServer call these through one transport that keeps each
+    // provider's pace, breaker, timeout and size cap.
+    .target(
+      name: "MusicBrainzAPI",
+      dependencies: [.product(name: "OpenAPIRuntime", package: "swift-openapi-runtime")],
+      swiftSettings: swiftSettings,
+      plugins: [.plugin(name: "OpenAPIGenerator", package: "swift-openapi-generator")]
+    ),
+    .target(
+      name: "TwitchAPI",
+      dependencies: [.product(name: "OpenAPIRuntime", package: "swift-openapi-runtime")],
+      swiftSettings: swiftSettings,
+      plugins: [.plugin(name: "OpenAPIGenerator", package: "swift-openapi-generator")]
+    ),
+    .target(
+      name: "IGDBAPI",
+      dependencies: [.product(name: "OpenAPIRuntime", package: "swift-openapi-runtime")],
+      swiftSettings: swiftSettings,
+      plugins: [.plugin(name: "OpenAPIGenerator", package: "swift-openapi-generator")]
+    ),
+    .target(
+      name: "ScreenScraperAPI",
+      dependencies: [.product(name: "OpenAPIRuntime", package: "swift-openapi-runtime")],
+      swiftSettings: swiftSettings,
+      plugins: [.plugin(name: "OpenAPIGenerator", package: "swift-openapi-generator")]
+    ),
+    .target(
+      name: "BoardGameGeekAPI",
+      dependencies: [.product(name: "OpenAPIRuntime", package: "swift-openapi-runtime")],
       swiftSettings: swiftSettings,
       plugins: [.plugin(name: "OpenAPIGenerator", package: "swift-openapi-generator")]
     ),

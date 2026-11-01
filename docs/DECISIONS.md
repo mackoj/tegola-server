@@ -309,3 +309,111 @@ store tests pass on 18.6.
 
 **Upgrading a deployment.** None runs yet. A stack that ran 17 has its data in `postgres_data/` at the old layout:
 dump it with 17 (`pg_dumpall`), start 18 on a fresh volume, restore. The server migrates its schema at start (D-17).
+
+### D-22 · The first sources, and how every source behaves
+
+**Choice.** The owner picked them on 2026-11-01 (PLAN §9, question 1): MusicBrainz for `music`; IGDB and ScreenScraper
+for `video-game`; BoardGameGeek for `board-games`; nothing for `thing`.
+
+**What each answers.**
+
+| Source | Type | Barcode | Words | Key | Pace | Ids |
+|---|---|---|---|---|---|---|
+| MusicBrainz | `music` | yes, exact hits only (0.95) | release, artist, catalogue number, year, format | none; a contact for the User-Agent | 1 / 1.1 s | `musicbrainz:release:<mbid>`, works `musicbrainz:release-group:<mbid>` |
+| IGDB | `video-game` | no index | title, platform, region, year | Twitch client id + secret | 1 / 260 ms | `igdb:game:<id>:<platform>:<region>`, works `igdb:game:<id>` |
+| ScreenScraper | `video-game` | no index | title, system, region, year | developer id + password (member optional) | 1 / 1.2 s | `screenscraper:game:<id>:<region>`, works `screenscraper:game:<id>` |
+| BoardGameGeek | `board-games` | no index | title, publisher, year | XML API bearer token | 1 / 2 s | `boardgamegeek:<id>` for both |
+
+A barcode for a type with no barcode index answers "no match", and the app falls back to words (tegola's
+`board-games.yml` already expects it). Candidates fill the type file's field keys (`medium`, `format`, `label`,
+`catalogNumber`, `country`; `platform`, `publisher`, `region`; `designer`, `players`, `playTime`, `minAge`, `weight`)
+and the subtype when the platform or medium has one. Every candidate names its source, with the attribution its terms
+ask for.
+
+**Ranking.** For words, every source ranks the same way: title similarity 70 %, subtitle 20 %, year 10 %, each
+counted only when the query gives it (`TextMatch.confidence`). Titles compare after folding case, accents,
+punctuation, `&` and a leading article, by character bigrams, so word order and small typos cost little. D-13's
+buckets then apply to imports unchanged. OCR text searches its first three lines, with the reason `ocr`.
+
+**How every source behaves.**
+- **One connection each** (`SupplierConnection`, D-23): a pacer keeps the provider's rate across all requests, and refuses a
+  request that would wait more than 10 s (12 s for BGG) with `Retry-After` instead of queueing it. A breaker opens
+  for 30 s after five failures in a row. Requests time out at 8 s; answers are capped at 2 MB.
+- **Failures are 503 with `Retry-After`**, never an empty answer that would read as "no match". A provider's 429 or
+  503 (and ScreenScraper's 423, 430, 431) keep its `Retry-After`, an hour for ScreenScraper's daily quota. A refused
+  key is logged as `unauthorized`, an operator problem.
+- **Several sources for one type** are asked in parallel. When some answer, their answers are enough. When all fail,
+  the lookup is 503 with the soonest retry.
+- **Answers are cached** in memory for a day (an empty answer for an hour), per source and normalised query, at most
+  10,000 of them. Failures are never cached. A 50-row import against a 1-request-a-second source runs out of pace
+  part-way and answers 503; the rows it reached are cached, so each retry goes further.
+
+**Security.**
+- Keys come from the environment only (`SourceSettings`). A pair set by half, or a value with spaces or control
+  characters, stops the server. The start-up log names the sources that are on, never a value.
+- Words never change a provider's query. MusicBrainz's Lucene syntax is escaped, with `AND`/`OR`/`NOT` lowered.
+  IGDB's quoted string loses `"`, `\` and `;`. Ids are checked before they reach a URL: UUIDs for MusicBrainz,
+  integers for the others.
+- The Twitch secret goes in a POST body, never a URL. ScreenScraper takes its credentials in the query string by
+  design: its URLs are never logged, and its media URLs, which carry them too, are never passed on, so its candidates
+  have no images.
+- Images are kept only when they're HTTPS on the source's own image host (`images.igdb.com`,
+  `cf.geekdo-images.com`), without credentials or a query.
+- Provider strings lose control characters and are cut at 300 characters. BGG's XML is parsed without resolving
+  external entities.
+- A source failure logs the source and a reason code (`network`, `http-5xx`, `busy`, `undecodable`, …), never the
+  URL, the words or a key.
+
+**The tests' answers are hand-written** from each provider's documented format: this environment can't reach the
+providers. They should be re-recorded from the live APIs once the keys exist.
+
+**Left for later.** Cover art for music (the Cover Art Archive, one more request per release, at MusicBrainz's pace).
+A cache shared by several instances, with the shared rate limits (D-9).
+
+### D-23 · Every supplier has an OpenAPI description; one protocol for any supplier
+
+**Direction.** The owner, 2026-11-01: "each data source should have an openapi file that we either create ourself or
+that is from our data supplier", and "one protocol that will represent any data supplier abstractly".
+
+**Decision.**
+- **One description per supplier**, in `api/sources/`: `musicbrainz`, `twitch` (IGDB's token), `igdb`,
+  `screenscraper`, `boardgamegeek`. None of these publishes an OpenAPI description (checked against their docs:
+  MusicBrainz WS/2, IGDB v4, Twitch OAuth, ScreenScraper api2, BGG XML API 2), so all five are ours. Each one carries
+  its source and the provider's terms, and holds only the operations and fields the server reads. A supplier that
+  later publishes its own replaces ours.
+- **One generated client per supplier**, each in its own target (`Sources/<Name>API/`, the description linked in,
+  `generate: [types, client]`), because the generator takes one document per target. The clients stay internal to the
+  package.
+- **`DataSupplier`** (was `CatalogueSource`) is the one protocol for any supplier: name, type, id prefix, whether it
+  has a barcode index, and `barcode`, `search` and `work`, which return the contract's candidates and works or a
+  `SupplierFailure`. Everything specific to a supplier stays behind it: its client, its key, its query language, its
+  answer's shape. The composite is `SuppliersLookupService`; the code is in `Sources/TegolaServer/Suppliers/`.
+- **Every client sends through `SupplierTransport`**, a `ClientTransport` over `SupplierConnection`, so the generated
+  code gets D-22's pace, breaker, timeout and size cap. Tests still replay fixtures through `HTTPTransport`. Keys and
+  tokens go through `HeadersMiddleware`, since OpenAPI ignores an `Authorization` header parameter. ScreenScraper's
+  credentials are query parameters in its description, because that is its API.
+- **What the generator can't do:** BGG answers XML, which the client hands back raw. `BoardGameGeekSupplier` parses
+  it, requiring an `<items>` root and refusing any DOCTYPE or entity declaration.
+
+**The first review's findings** (`tasks/M3-review.md`), fixed with this change, each with a test:
+- **Years:** the ranking only compares years from 1800 to 2100, and an import row's year outside that range is
+  dropped. The contract gives it no range, so the row is still answered. An extreme year could overflow and stop
+  the server.
+- **Failures:** a supplier failing beside an empty answer is 503, not "no match". Error pages are failures.
+- **Redirects** are refused, so no key follows one.
+- **Cache:** answers are cut to each supplier's best 10 before caching, keys are JSON, and the eviction is fixed.
+- **Imports** stop after 20 s.
+- **Twitch:** one token fetch is shared by concurrent first requests.
+- **Smaller fixes** to the escaping and the mappings.
+
+**The second review's findings**, over the whole milestone (`tasks/M3-review.md`), fixed with a test each:
+- **Content types:** BGG labels its XML `text/xml`, which the description now declares beside `application/xml`.
+  Fixtures carry each provider's Content-Type, because the generated clients refuse one their description doesn't
+  declare.
+- **Time:** the whole exchange, body included, is bounded by the 8 s timeout.
+- **Busy providers:** a provider that said "busy" is left alone until its `Retry-After`.
+- **Breaker:** an answer too large for one query doesn't count towards it, and once it's half open, only one probe
+  goes through.
+- **BGG:** answers must be UTF-8 without NULs before the declaration check.
+- **Twitch:** a fresh token IGDB refuses isn't fetched again.
+- **MusicBrainz:** the year and subtype rank and filter locally instead of in its index.

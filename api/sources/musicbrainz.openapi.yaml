@@ -1,0 +1,69 @@
+openapi: 3.1.0
+info:
+  title: MusicBrainz Web Service 2 (the part tegola-server uses)
+  version: "2"
+  description: |
+    Written by tegola-server (D-23): MusicBrainz publishes no OpenAPI description. Source: https://musicbrainz.org/doc/MusicBrainz_API
+    and https://musicbrainz.org/doc/MusicBrainz_API/Search. Only the operations and fields the server reads.
+    Terms: a User-Agent naming the application and a contact, at most one request a second. Data is CC0.
+servers:
+  - url: https://musicbrainz.org/ws/2
+paths:
+  /release:
+    get:
+      operationId: releases
+      summary: Search releases (`query`), or browse a release group's releases (`release-group`).
+      parameters:
+        - { name: query, in: query, description: "A Lucene query (search).", schema: { type: string } }
+        - { name: release-group, in: query, description: "A release group MBID (browse).", schema: { type: string, format: uuid } }
+        - { name: inc, in: query, schema: { type: string } }
+        - { name: fmt, in: query, required: true, schema: { type: string, enum: [json] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100 } }
+      responses:
+        "200":
+          description: Releases.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReleaseList" }
+        "404": { description: Not found. }
+components:
+  schemas:
+    ReleaseList:
+      type: object
+      required: [releases]
+      properties:
+        releases: { type: array, items: { $ref: "#/components/schemas/Release" } }
+    Release:
+      type: object
+      required: [id, title]
+      properties:
+        id: { type: string }
+        score: { type: integer }
+        title: { type: string }
+        date: { type: string }
+        country: { type: string }
+        barcode: { type: [string, "null"] }
+        artist-credit: { type: array, items: { $ref: "#/components/schemas/ArtistCredit" } }
+        release-group: { $ref: "#/components/schemas/ReleaseGroup" }
+        label-info: { type: array, items: { $ref: "#/components/schemas/LabelInfo" } }
+        media: { type: array, items: { $ref: "#/components/schemas/Medium" } }
+    ArtistCredit:
+      type: object
+      properties:
+        name: { type: string }
+        joinphrase: { type: string }
+        artist: { type: object, properties: { name: { type: string } } }
+    ReleaseGroup:
+      type: object
+      properties:
+        id: { type: string }
+        title: { type: string }
+    LabelInfo:
+      type: object
+      properties:
+        catalog-number: { type: [string, "null"] }
+        label: { type: [object, "null"], properties: { name: { type: string } } }
+    Medium:
+      type: object
+      properties:
+        format: { type: [string, "null"] }
