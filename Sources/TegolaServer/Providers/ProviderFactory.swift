@@ -93,5 +93,16 @@ func makeLookupService(
       )
     }
   }
-  return LookupRouter(sources: sources)
+  return LookupRouter(sources: sources, logger: sourceLogger)
+}
+
+/// Mock mode (D-28): one mock provider per type, behind the same router as the real sources, so ranking, merging,
+/// caching and failures behave as they will in production.
+func makeMockLookupService(_ catalogue: MockCatalogue, logger: Logger) -> LookupRouter {
+  var sourceLogger = logger
+  sourceLogger[metadataKey: "component"] = "source"
+  return LookupRouter(
+    sources: catalogue.types.map { MockProvider(typeID: $0, catalogue: catalogue) },
+    logger: sourceLogger
+  )
 }

@@ -48,16 +48,25 @@ Needs Swift 6.4 (Xcode 27 on the Mac, or the `swift:6.4-noble` image on Linux).
 
 ```sh
 git clone https://github.com/mackoj/tegola-server.git && cd tegola-server
+scripts/run.sh --mock           # a development server with mock data: no keys, no network (mocks/README.md)
+scripts/run.sh                  # the real sources, with the keys you put in .env.local
+```
+
+`scripts/run.sh`:
+- writes `.env.local` on its first run: a debug token, and the source keys to fill in;
+- builds, prints the URL and `curl` lines to try, and the two values to put in the app's Xcode scheme
+  (`TEGOLA_LOOKUP_URL`, `TEGOLA_DEBUG_TOKEN`);
+- shows the log as it runs: each request, and at debug level which sources each lookup asked, what they answered
+  or why they failed, and how long it took (`--quiet` keeps requests and warnings only). The log is also written to
+  `build/server.log`.
+
+Ctrl-C stops it. To reach it from an iPhone on the same network, set `TEGOLA_HOST=0.0.0.0` in `.env.local`: the
+script then prints the Mac's address for the scheme. If the app refuses plain `http` to that address, its Debug
+`Info.plist` needs `NSAllowsLocalNetworking`.
+
+```sh
 scripts/test.sh                 # build and test → build/test-summary.md (TEGOLA_TEST_DATABASE_URL adds Postgres)
 scripts/ci.sh                   # the full gate → build/ci-summary.md
-
-# A development server on http://127.0.0.1:8080, accepting a debug token (simulators, CI):
-TEGOLA_ENVIRONMENT=development \
-TEGOLA_APP_ID=ABCDE12345.fr.macko.tegola \
-TEGOLA_DEBUG_TOKEN="$(openssl rand -hex 24)" \
-swift run tegola-server
-
-curl -s http://127.0.0.1:8080/v1/health
 ```
 
 In a cloud session without Swift: `scripts/cloud-toolchain.sh install`, then `scripts/cloud-toolchain.sh run
@@ -83,7 +92,8 @@ log the reason first.
 | `TEGOLA_SCREENSCRAPER_DEV_ID`, `TEGOLA_SCREENSCRAPER_DEV_PASSWORD` | unset | Turn ScreenScraper on for video games. Both or neither; `TEGOLA_SCREENSCRAPER_USER` and `_PASSWORD` add a member's quota |
 | `TEGOLA_BGG_TOKEN` | unset | Turns board games on (BoardGameGeek XML API bearer token) |
 | `TEGOLA_WIKIDATA_CONTACT` | unset | Turns Wikidata on: `thing`, and the fallback for music, video games and board games (D-26). A contact URL or e-mail for its User-Agent |
-| `LOG_LEVEL` | `info` | swift-log level |
+| `TEGOLA_MOCKS` | unset | Development only: mock mode, from this catalogue file (`mocks/catalogue.json`; D-28). Replaces the sources; refused beside their settings and in production |
+| `LOG_LEVEL` | `info` | swift-log level. `debug` adds what each lookup asked and got (D-28) |
 
 ## Deploy
 

@@ -13,6 +13,11 @@ import OpenAPIRuntime
 
 // MARK: - the wire
 
+extension Duration {
+  /// Whole milliseconds, for log lines.
+  var milliseconds: Int64 { components.seconds * 1000 + components.attoseconds / 1_000_000_000_000_000 }
+}
+
 /// One outbound HTTP request, as `ProviderTransport` hands it to an `HTTPTransport`.
 package struct OutboundRequest: Sendable, Equatable {
   package enum Method: String, Sendable { case get = "GET", post = "POST" }
@@ -412,7 +417,17 @@ struct ProviderTransport: ClientTransport {
       headers: headers,
       body: data
     )
+    let start = ContinuousClock.now
     let response = try await connection.exchange(outbound)
+    // The source, the operation in its description, the status, the time and the size: never the URL, a header or
+    // the body (D-15, D-28). Failures are logged by the connection, as warnings.
+    connection.logger.debug(
+      "source call",
+      metadata: [
+        "source": "\(connection.name)", "operation": "\(operationID)", "status": "\(response.status)",
+        "ms": "\((ContinuousClock.now - start).milliseconds)", "bytes": "\(response.body.count)",
+      ]
+    )
     var fields = HTTPFields()
     for (name, value) in response.headers {
       if let name = HTTPField.Name(name) { fields[name] = value }

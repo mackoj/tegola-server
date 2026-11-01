@@ -1,0 +1,366 @@
+{
+  "latencyMs": 150,
+  "releases": [
+    {
+      "type": "music",
+      "id": "ok-computer-cd-gb",
+      "work": "ok-computer",
+      "title": "OK Computer",
+      "subtitle": "Radiohead",
+      "year": 1997,
+      "subtype": "cd",
+      "region": "GB",
+      "barcodes": [
+        "724385522925"
+      ],
+      "fields": {
+        "medium": "CD",
+        "format": "CD",
+        "label": "Parlophone",
+        "catalogNumber": "7243 8 55229 2 5",
+        "country": "GB"
+      },
+      "entries": {
+        "tracklist": [
+          {
+            "position": "1",
+            "title": "Airbag",
+            "duration": "4:44"
+          },
+          {
+            "position": "2",
+            "title": "Paranoid Android",
+            "duration": "6:23"
+          },
+          {
+            "position": "3",
+            "title": "Subterranean Homesick Alien",
+            "duration": "4:27"
+          },
+          {
+            "position": "4",
+            "title": "Exit Music (For a Film)",
+            "duration": "4:24"
+          },
+          {
+            "position": "5",
+            "title": "Let Down",
+            "duration": "4:59"
+          },
+          {
+            "position": "6",
+            "title": "Karma Police",
+            "duration": "4:21"
+          },
+          {
+            "position": "7",
+            "title": "Fitter Happier",
+            "duration": "1:57"
+          },
+          {
+            "position": "8",
+            "title": "Electioneering",
+            "duration": "3:50"
+          },
+          {
+            "position": "9",
+            "title": "Climbing Up the Walls",
+            "duration": "4:45"
+          },
+          {
+            "position": "10",
+            "title": "No Surprises",
+            "duration": "3:48"
+          },
+          {
+            "position": "11",
+            "title": "Lucky",
+            "duration": "4:19"
+          },
+          {
+            "position": "12",
+            "title": "The Tourist",
+            "duration": "5:24"
+          }
+        ]
+      }
+    },
+    {
+      "type": "music",
+      "id": "ok-computer-oknotok-lp-gb",
+      "work": "ok-computer",
+      "title": "OK Computer OKNOTOK 1997 2017",
+      "subtitle": "Radiohead",
+      "year": 2017,
+      "subtype": "vinyl",
+      "region": "GB",
+      "barcodes": [
+        "2000000000015"
+      ],
+      "fields": {
+        "medium": "Vinyl",
+        "format": "3×LP",
+        "label": "XL Recordings",
+        "catalogNumber": "XLLP868",
+        "country": "GB"
+      }
+    },
+    {
+      "type": "music",
+      "id": "kind-of-blue-lp-us",
+      "work": "kind-of-blue",
+      "title": "Kind of Blue",
+      "subtitle": "Miles Davis",
+      "year": 1959,
+      "subtype": "vinyl",
+      "region": "US",
+      "barcodes": [
+        "2000000000022"
+      ],
+      "fields": {
+        "medium": "Vinyl",
+        "format": "LP",
+        "label": "Columbia",
+        "catalogNumber": "CL 1355",
+        "country": "US"
+      },
+      "entries": {
+        "tracklist": [
+          {
+            "position": "1",
+            "title": "So What",
+            "duration": "9:22"
+          },
+          {
+            "position": "2",
+            "title": "Freddie Freeloader",
+            "duration": "9:46"
+          },
+          {
+            "position": "3",
+            "title": "Blue in Green",
+            "duration": "5:37"
+          },
+          {
+            "position": "4",
+            "title": "All Blues",
+            "duration": "11:33"
+          },
+          {
+            "position": "5",
+            "title": "Flamenco Sketches",
+            "duration": "9:26"
+          }
+        ]
+      }
+    },
+    {
+      "type": "music",
+      "id": "rumours-cassette-us",
+      "work": "rumours",
+      "title": "Rumours",
+      "subtitle": "Fleetwood Mac",
+      "year": 1977,
+      "subtype": "cassette",
+      "region": "US",
+      "barcodes": [
+        "2000000000039"
+      ],
+      "fields": {
+        "medium": "Cassette",
+        "format": "Cassette",
+        "label": "Warner Bros. Records",
+        "country": "US"
+      }
+    },
+    {
+      "type": "video-game",
+      "id": "super-mario-64-pal",
+      "work": "super-mario-64",
+      "title": "Super Mario 64",
+      "subtitle": "Nintendo 64",
+      "year": 1997,
+      "subtype": "n64",
+      "region": "PAL",
+      "barcodes": [
+        "2000000000046"
+      ],
+      "fields": {
+        "platform": "Nintendo 64",
+        "publisher": "Nintendo",
+        "region": "PAL",
+        "media": "Cartridge"
+      }
+    },
+    {
+      "type": "video-game",
+      "id": "super-mario-64-ntsc-u",
+      "work": "super-mario-64",
+      "title": "Super Mario 64",
+      "subtitle": "Nintendo 64",
+      "year": 1996,
+      "subtype": "n64",
+      "region": "NTSC-U",
+      "barcodes": [
+        "2000000000053"
+      ],
+      "fields": {
+        "platform": "Nintendo 64",
+        "publisher": "Nintendo",
+        "region": "NTSC-U",
+        "media": "Cartridge"
+      }
+    },
+    {
+      "type": "video-game",
+      "id": "final-fantasy-vii-pal",
+      "work": "final-fantasy-vii",
+      "title": "Final Fantasy VII",
+      "subtitle": "PlayStation",
+      "year": 1997,
+      "subtype": "ps1",
+      "region": "PAL",
+      "barcodes": [
+        "2000000000060"
+      ],
+      "fields": {
+        "platform": "PlayStation",
+        "publisher": "Sony Computer Entertainment",
+        "region": "PAL",
+        "media": "Optical disc"
+      }
+    },
+    {
+      "type": "video-game",
+      "id": "tetris-game-boy-ntsc-u",
+      "work": "tetris",
+      "title": "Tetris",
+      "subtitle": "Game Boy",
+      "year": 1989,
+      "subtype": "game-boy",
+      "region": "NTSC-U",
+      "barcodes": [
+        "2000000000077"
+      ],
+      "fields": {
+        "platform": "Game Boy",
+        "publisher": "Nintendo",
+        "region": "NTSC-U",
+        "media": "Cartridge"
+      }
+    },
+    {
+      "type": "board-games",
+      "id": "agricola-lookout-2007",
+      "work": "agricola",
+      "title": "Agricola",
+      "subtitle": "Lookout Games",
+      "year": 2007,
+      "barcodes": [
+        "2000000000084"
+      ],
+      "fields": {
+        "designer": "Uwe Rosenberg",
+        "players": "1–5",
+        "playTime": 150,
+        "minAge": 12,
+        "weight": 3.6
+      }
+    },
+    {
+      "type": "board-games",
+      "id": "agricola-z-man-2008",
+      "work": "agricola",
+      "title": "Agricola",
+      "subtitle": "Z-Man Games",
+      "year": 2008,
+      "barcodes": [
+        "2000000000091"
+      ],
+      "fields": {
+        "designer": "Uwe Rosenberg",
+        "players": "1–5",
+        "playTime": 150,
+        "minAge": 12,
+        "weight": 3.6
+      }
+    },
+    {
+      "type": "board-games",
+      "id": "catan-kosmos-1995",
+      "work": "catan",
+      "title": "Catan",
+      "subtitle": "Kosmos",
+      "year": 1995,
+      "barcodes": [
+        "2000000000107"
+      ],
+      "fields": {
+        "designer": "Klaus Teuber",
+        "players": "3–4",
+        "playTime": 90,
+        "minAge": 10,
+        "weight": 2.3
+      }
+    },
+    {
+      "type": "thing",
+      "id": "tamagotchi-1996",
+      "work": "tamagotchi",
+      "title": "Tamagotchi",
+      "subtitle": "Bandai",
+      "year": 1996,
+      "barcodes": [
+        "4543112000013"
+      ],
+      "fields": {
+        "variant": "Original",
+        "material": "Plastic"
+      }
+    },
+    {
+      "type": "thing",
+      "id": "fox-enamel-pin",
+      "title": "Fox enamel pin",
+      "subtitle": "Studio Fennel",
+      "year": 2021,
+      "barcodes": [
+        "2000000000114"
+      ],
+      "fields": {
+        "material": "Enamel",
+        "size": "30 mm"
+      }
+    }
+  ],
+  "scenarios": [
+    {
+      "barcode": "0000000000000",
+      "outcome": "unavailable",
+      "retryAfter": 30
+    },
+    {
+      "barcode": "1111111111111",
+      "outcome": "nothing"
+    },
+    {
+      "barcode": "2222222222222",
+      "outcome": "slow",
+      "delayMs": 4000
+    },
+    {
+      "title": "unavailable",
+      "outcome": "unavailable",
+      "retryAfter": 30
+    },
+    {
+      "title": "nothing",
+      "outcome": "nothing"
+    },
+    {
+      "title": "slow",
+      "outcome": "slow",
+      "delayMs": 4000
+    }
+  ]
+}

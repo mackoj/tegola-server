@@ -23,6 +23,8 @@ struct ProviderRecord: Sendable, Hashable {
   var year: Int?
   var region: String?
   var fields: [String: Components.Schemas.FieldValue] = [:]
+  /// List and log fields (a tracklist), by the type file's key; each entry by the field's entry shape.
+  var entries: [String: [[String: String?]]] = [:]
   var images: [Components.Schemas.Image] = []
   /// Ids in other databases, the provider's own included, by namespace (`musicbrainz`, `igdb`, `wikidata`). Two
   /// records that disagree on one are never the same release.
@@ -211,6 +213,9 @@ enum RecordMerge {
       for member in members { if let found = value(member.record) { return found } }
       return nil
     }
+    // A list comes whole from one record, the first that has it: two sources' tracklists don't interleave.
+    var entries: [String: [[String: String?]]] = [:]
+    for member in members { entries.merge(member.record.entries) { kept, _ in kept } }
     return Candidate(
       releaseID: lead.releaseID,
       workID: first(\.workID),
@@ -221,6 +226,8 @@ enum RecordMerge {
       year: first(\.year),
       region: first(\.region),
       fields: fields.isEmpty ? nil : .init(additionalProperties: fields),
+      entries: entries.isEmpty
+        ? nil : .init(additionalProperties: entries.mapValues { $0.map { .init(additionalProperties: $0) } }),
       images: images.isEmpty ? nil : images,
       confidence: members.map(\.confidence).max() ?? 0,
       reasons: reasons.map { .init(kind: $0) },

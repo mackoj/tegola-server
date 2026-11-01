@@ -27,6 +27,9 @@ public struct ServerConfiguration: Sendable {
   public var database: DatabaseSettings?
   /// Which lookup sources are on, with their keys (D-22). None by default: lookups answer "no match".
   public var sources: SourceSettings
+  /// Mock mode (D-28), from `TEGOLA_MOCKS`: a development server answers from this catalogue and made-up releases
+  /// instead of the sources. Refused in production, and beside a source's settings.
+  public var mocks: MockCatalogue?
   public var limits: Limits
 
   public struct Limits: Sendable {
@@ -68,6 +71,7 @@ public struct ServerConfiguration: Sendable {
     trustedProxyHops: Int = 0,
     database: DatabaseSettings? = nil,
     sources: SourceSettings = SourceSettings(),
+    mocks: MockCatalogue? = nil,
     limits: Limits = Limits()
   ) throws(ConfigurationError) {
     self.environment = environment
@@ -78,6 +82,7 @@ public struct ServerConfiguration: Sendable {
     self.trustedProxyHops = trustedProxyHops
     self.database = database
     self.sources = sources
+    self.mocks = mocks
     self.limits = limits
     try validate()
   }
@@ -104,6 +109,11 @@ public struct ServerConfiguration: Sendable {
     let database = try env["TEGOLA_DATABASE_URL"].flatMap { $0.isEmpty ? nil : $0 }.map {
       (raw) throws(ConfigurationError) in try DatabaseSettings.parse(raw)
     }
+    // Mock data never reaches a production server: refused before the file is even read (D-28).
+    let mocksPath = env["TEGOLA_MOCKS"].flatMap { $0.isEmpty ? nil : $0 }
+    if environment == .production, mocksPath != nil {
+      throw .invalid("TEGOLA_MOCKS is refused in production: unset it")
+    }
     // A production server without a database would forget every key at each restart: refuse to start (D-17).
     if environment == .production, database == nil {
       throw .invalid("TEGOLA_DATABASE_URL is required in production (postgres://…)")
@@ -116,7 +126,8 @@ public struct ServerConfiguration: Sendable {
       debugToken: env["TEGOLA_DEBUG_TOKEN"].flatMap { $0.isEmpty ? nil : $0 },
       trustedProxyHops: hops ?? 0,
       database: database,
-      sources: try SourceSettings.load(from: env)
+      sources: try SourceSettings.load(from: env),
+      mocks: try mocksPath.map { (path) throws(ConfigurationError) in try MockCatalogue.load(path: path) }
     )
   }
 
@@ -130,6 +141,14 @@ public struct ServerConfiguration: Sendable {
         throw .invalid("TEGOLA_DEBUG_TOKEN is refused in production: unset it")
       }
       guard debugToken.count >= 32 else { throw .invalid("TEGOLA_DEBUG_TOKEN must be at least 32 characters") }
+    }
+    if mocks != nil {
+      guard environment == .development else { throw .invalid("TEGOLA_MOCKS is refused in production: unset it") }
+      guard sources.isEmpty else {
+        throw .invalid(
+          "TEGOLA_MOCKS replaces the lookup sources: unset their settings (\(sources.enabled.joined(separator: ", ")))"
+        )
+      }
     }
   }
 

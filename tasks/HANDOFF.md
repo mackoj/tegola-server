@@ -3,8 +3,9 @@
 The state of the work for whoever picks it up next: a new session, another agent, or the owner. Read this first, keep
 it short and current.
 
-**Updated:** 2026-11-01. M1 to M3 are merged, and so are contract 0.2.0 (D-24), music cover art (D-25) and
-Wikidata with tiers (D-26). **M5 · providers** has started from the owner's "Data Providers" proposal
+**Updated:** 2026-11-01. `scripts/run.sh [--mock]` runs a development server in one command, with mock data for
+testing the app and debug lines for what each lookup did (D-28). M1 to M3 are merged, and so are contract 0.2.0
+(D-24), music cover art (D-25) and Wikidata with tiers (D-26). **M5 · providers** has started from the owner's "Data Providers" proposal
 (`docs/proposals/data-providers.dc.html`), adopted with changes (D-27): T5.1 and T5.2 are done on this branch.
 Providers now return `ProviderRecord`s, and `LookupRouter` ranks them one way and merges records of one release from
 several providers. "Supplier" is "provider" in the code. tegola's M5 and M6 are merged, so the app's lookup client
@@ -57,7 +58,10 @@ update.
 
 ## Where things stand
 
-- **Spec:** `docs/PLAN.md`; decisions D-1 to D-27 in `docs/DECISIONS.md`.
+- **Spec:** `docs/PLAN.md`; decisions D-1 to D-28 in `docs/DECISIONS.md`.
+- **Running it (D-28):** `scripts/run.sh` in one command; `--mock` answers from `mocks/catalogue.json` and made-up
+  releases (scenarios for 503, no match, slow), through the real router. At debug level, `lookup`, `source asked`
+  and `source call` lines say what each lookup did, shape only. Tests: `MockTests.swift`.
 - **M5 (providers, in progress):** D-27. Providers return `ProviderRecord`s; `Ranking` scores them (D-22's formula
   times `ProviderWeights`); `RecordMerge` makes one candidate of records that share a release-level external id
   (`identifying`) or agree on type, title, subtype, region and year, one to one. Tests: `RecordMergeTests.swift`.
@@ -95,14 +99,15 @@ update.
 
 ```sh
 git clone https://github.com/mackoj/tegola-server.git && cd tegola-server
+scripts/run.sh --mock      # a development server with mock data, its log in the terminal (D-28, mocks/README.md)
+scripts/run.sh             # the real sources, with the keys in .env.local (written on the first run)
 scripts/test.sh            # → build/test-summary.md
 scripts/ci.sh              # the full gate → build/ci-summary.md (contract drift needs ../tegola, or TEGOLA_DIR)
-TEGOLA_ENVIRONMENT=development TEGOLA_APP_ID=ABCDE12345.fr.macko.tegola \
-  TEGOLA_DEBUG_TOKEN="$(openssl rand -hex 24)" swift run tegola-server
 ```
 
-**If anything fails:** paste `build/ci-summary.md`, and the log it names, into a session.
+`scripts/run.sh` prints the two values the app's Debug scheme reads (`TEGOLA_LOOKUP_URL`, `TEGOLA_DEBUG_TOKEN`).
 
+**If anything fails:** paste `build/ci-summary.md`, and the log it names, into a session.
 
 ## How the work is run
 

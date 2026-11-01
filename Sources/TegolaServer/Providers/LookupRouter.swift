@@ -86,6 +86,8 @@ package struct LookupRouter: LookupService {
   let cache: AnswerCache<[ProviderRecord]>
   let works: AnswerCache<Components.Schemas.Work>
   let lifetimes: Lifetimes
+  /// Debug lines for each lookup and each provider it asked: shape only (D-15, D-28), never the words, a code or an id.
+  let logger: Logger
 
   struct Lifetimes: Sendable {
     var answer: Duration = .seconds(24 * 3600)
@@ -98,17 +100,23 @@ package struct LookupRouter: LookupService {
     var failures: [Int] = []
   }
 
-  init(sources: [any DataProvider], cacheCapacity: Int = 10_000, lifetimes: Lifetimes = Lifetimes()) {
+  init(
+    sources: [any DataProvider],
+    cacheCapacity: Int = 10_000,
+    lifetimes: Lifetimes = Lifetimes(),
+    logger: Logger = Logger(label: "tegola-server.router") { _ in SwiftLogNoOpLogHandler() }
+  ) {
     self.sources = Dictionary(grouping: sources, by: \.typeID)
     self.cache = AnswerCache(capacity: cacheCapacity)
     self.works = AnswerCache(capacity: max(1, cacheCapacity / 10))
     self.lifetimes = lifetimes
+    self.logger = logger
   }
 
   package var supportedTypes: [String] { sources.keys.sorted() }
 
   package func barcode(_ query: BarcodeQuery) async throws -> [Candidate] {
-    try await tiered(query.typeID) { tier in await askBarcode(tier, query) }
+    try await tiered(query.typeID, "barcode") { tier in await askBarcode(tier, query) }
   }
 
   /// The words go to every provider of the tier, a barcode to those with a barcode index, both at once. A release
@@ -138,7 +146,7 @@ package struct LookupRouter: LookupService {
         region: hints.region
       )
     }
-    return try await tiered(typeID) { tier in
+    return try await tiered(typeID, "identify") { tier in
       func words() async -> TierAnswer {
         guard let query else { return TierAnswer() }
         return await askWords(tier, query)
@@ -167,7 +175,7 @@ package struct LookupRouter: LookupService {
       limit: 5,
       reason: .title
     )
-    return try await tiered(typeID) { tier in await askWords(tier, query) }
+    return try await tiered(typeID, "match") { tier in await askWords(tier, query) }
   }
 
   package func work(id: String) async throws -> Components.Schemas.Work? {
@@ -186,18 +194,49 @@ package struct LookupRouter: LookupService {
 
   /// Asks the type's tiers in order and returns the first one's candidates, if it found any. With none, any failure
   /// on the way is `SourceUnavailable`: a fallback's "no match" can't stand for a primary that couldn't answer.
-  private func tiered(_ typeID: String, _ body: ([any DataProvider]) async -> TierAnswer) async throws -> [Candidate] {
+  private func tiered(
+    _ typeID: String,
+    _ operation: String,
+    _ body: ([any DataProvider]) async -> TierAnswer
+  ) async throws -> [Candidate] {
     let all = sources[typeID] ?? []
     var failures: [Int] = []
     for tier in ProviderTier.allCases {
       let asked = all.filter { $0.tier == tier }
       guard !asked.isEmpty else { continue }
       let answer = await body(asked)
-      if !answer.found.isEmpty { return RecordMerge.candidates(answer.found, order: all.map(\.name)) }
+      if !answer.found.isEmpty {
+        let candidates = RecordMerge.candidates(answer.found, order: all.map(\.name))
+        log(typeID, operation, outcome: "found", tier: tier, records: answer.found.count, candidates: candidates.count)
+        return candidates
+      }
       failures += answer.failures
     }
-    if let soonest = failures.min() { throw SourceUnavailable(retryAfter: soonest) }
+    if let soonest = failures.min() {
+      log(typeID, operation, outcome: "unavailable", tier: nil, records: 0, candidates: 0)
+      throw SourceUnavailable(retryAfter: soonest)
+    }
+    log(typeID, operation, outcome: all.isEmpty ? "no-source" : "no-match", tier: nil, records: 0, candidates: 0)
     return []
+  }
+
+  /// One line per lookup: the type, the operation, how it ended, the tier that answered, and how many records became
+  /// how many candidates.
+  private func log(
+    _ typeID: String,
+    _ operation: String,
+    outcome: String,
+    tier: ProviderTier?,
+    records: Int,
+    candidates: Int
+  ) {
+    logger.debug(
+      "lookup",
+      metadata: [
+        "type": "\(typeID)", "operation": "\(operation)", "outcome": "\(outcome)",
+        "tier": "\(tier.map { "\($0)" } ?? "-")", "records": "\(records)", "candidates": "\(candidates)",
+      ]
+    )
   }
 
   private func askWords(_ tier: [any DataProvider], _ query: SearchQuery) async -> TierAnswer {
@@ -230,11 +269,26 @@ package struct LookupRouter: LookupService {
     guard !asked.isEmpty else { return TierAnswer() }
     let cache = self.cache
     let lifetimes = self.lifetimes
+    let logger = self.logger
     let outcomes = await withTaskGroup(of: (Int, Result<[ScoredRecord], ProviderFailure>).self) { group in
       for (index, source) in asked.enumerated() {
         group.addTask {
+          let start = ContinuousClock.now
+          /// One line per provider asked: cached or not, its records, or why it failed, and how long it took.
+          func note(_ outcome: String, records: Int) {
+            logger.debug(
+              "source asked",
+              metadata: [
+                "source": "\(source.name)", "type": "\(source.typeID)", "operation": "\(operation)",
+                "outcome": "\(outcome)", "records": "\(records)", "ms": "\((ContinuousClock.now - start).milliseconds)",
+              ]
+            )
+          }
           let cacheKey = "\(source.name)|\(source.typeID)|\(operation)|\(key)"
-          if let cached = await cache.value(cacheKey) { return (index, .success(cached.map { score($0, source) })) }
+          if let cached = await cache.value(cacheKey) {
+            note("cached", records: cached.count)
+            return (index, .success(cached.map { score($0, source) }))
+          }
           do throws(ProviderFailure) {
             let scored = try await body(source)
               .filter {
@@ -245,8 +299,10 @@ package struct LookupRouter: LookupService {
               .prefix(10)
             let records = scored.map(\.record)
             await cache.store(records, for: cacheKey, lifetime: records.isEmpty ? lifetimes.empty : lifetimes.answer)
+            note("answered", records: records.count)
             return (index, .success(Array(scored)))
           } catch {
+            note(error.reason, records: 0)
             return (index, .failure(error))
           }
         }

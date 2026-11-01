@@ -588,3 +588,48 @@ second package in this repo.
   - the cache key above.
 - **What changes for the app:** IGDB and ScreenScraper no longer return one game twice. An import row both find is
   `matched`, where it used to be `ambiguous` (D-13).
+
+### D-28 · Run it in one command, a mock mode, and what a lookup did
+
+**Direction.** The owner, 2026-11-01: "a simple way to run the server on macOS, ideally one command, and to see
+logs of what is happening", and "a mock mode to test the app: fake the data recovery and provide data from mocks or
+create fake data".
+
+**Decision.**
+- **`scripts/run.sh`** runs a development server in one command:
+  - Toolchain: `xcrun swift` on the Mac, `swift` elsewhere.
+  - First run: it writes `.env.local` (git-ignored, mode 600) with a new debug token, a placeholder app id, and the
+    source keys left empty.
+  - Every run: it builds, then prints the URL and `curl` lines to try. It also prints the two values the app's Debug
+    scheme reads (tegola D-73): `TEGOLA_LOOKUP_URL`, and `TEGOLA_DEBUG_TOKEN` (the Mac's address when
+    `TEGOLA_HOST=0.0.0.0`, for a device).
+  - The log goes to the terminal, coloured by level, and to `build/server.log`. Ctrl-C shuts down cleanly.
+  - It always sets `TEGOLA_ENVIRONMENT=development`, and `LOG_LEVEL=debug` unless `--quiet`.
+  - The banner, with the token, goes to the terminal only, never into the log file.
+- **Mock mode** (`scripts/run.sh --mock`, or `TEGOLA_MOCKS=<file>`):
+  - **Where the answers come from:**
+    - The catalogue in the repo, `mocks/catalogue.json`: real-looking releases of the four v1 types, with the type
+      files' fields and a tracklist. `mocks/README.md` describes it.
+    - Made-up releases for everything else. The same input always makes the same release, which keeps what the
+      query asked for.
+    - Unknown words get one release (an import row is matched), two editions (ambiguous) or none (unknown), chosen
+      by the words.
+  - **Scenarios**, by barcode or title, play the app's other paths: unavailable (`503` with `Retry-After`), no
+    match, slow.
+  - **The router is the real one.** One `MockProvider` per type is a `DataProvider` behind the same `LookupRouter`,
+    so ranking, merging, caching, tiers, import buckets, App Attest and the debug token behave as with real sources.
+    Every candidate's source is "Mock".
+  - **Fail closed.** `TEGOLA_MOCKS` is refused in production, before the file is read. It replaces the sources and
+    refuses to start beside their settings. A catalogue that can't be read, or breaks the contract's limits (ids,
+    subtypes, regions, barcodes, years, lengths), stops the server at start-up and says where.
+- **What a lookup did**, at debug level, adding to D-15:
+  - one `lookup` line per lookup: the type, the operation, how it ended, the tier that answered, records and
+    candidates;
+  - one `source asked` line per provider: cached, answered or the failure's reason, its records, its milliseconds;
+  - one `source call` line per outbound request: the source, the operation in its description, the status, the
+    milliseconds and the bytes.
+
+  As D-15 requires, never the words, a barcode, an id, a URL or a header. Production runs at `info`, so it doesn't
+  write them. Tests send a sentinel through both paths and check it's absent (`LookupLogTests`).
+- **List fields.** `ProviderRecord.entries` carries list fields (a tracklist) into `Candidate.entries`, whole from the
+  leading record that has them.
